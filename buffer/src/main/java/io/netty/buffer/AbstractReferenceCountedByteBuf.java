@@ -97,12 +97,15 @@ public abstract class AbstractReferenceCountedByteBuf extends AbstractByteBuf {
     }
 
     private ByteBuf retain0(final int increment) {
+        // all changes to the raw count are 2x the "real" change
         int adjustIncrement = increment << 1; // overflow OK here
         int oldRef = refCntUpdater.getAndAdd(this, adjustIncrement);
         if ((oldRef & 1) != 0) {
             throw new IllegalReferenceCountException(0, increment);
-        } else if (oldRef <= 0 ? oldRef + adjustIncrement > 0
-                : oldRef + adjustIncrement < oldRef) {
+        }
+        // don't pass 0!
+        if ((oldRef <= 0 && oldRef + adjustIncrement >= 0)
+                || (oldRef >= 0 && oldRef + adjustIncrement < oldRef)) {
             // overflow case
             refCntUpdater.getAndAdd(this, -increment);
             throw new IllegalReferenceCountException(realRef(oldRef), increment);
@@ -144,13 +147,16 @@ public abstract class AbstractReferenceCountedByteBuf extends AbstractByteBuf {
                     return true;
                 }
                 if (!firstTry) {
+                    // this benefits throughput under high contention
                     Thread.yield();
                 }
             } else if (decrement < realCnt) {
-                if (refCntUpdater.compareAndSet(this, rawCnt, rawCnt - decrement - decrement)) {
+                // all changes to the raw count are 2x the "real" change
+                if (refCntUpdater.compareAndSet(this, rawCnt, rawCnt - (decrement << 1))) {
                     return false;
                 }
                 if (!firstTry) {
+                    // this benefits throughput under high contention
                     Thread.yield();
                 }
             } else if (!firstTry) {
