@@ -1489,7 +1489,7 @@ public class SslHandler extends ByteToMessageDecoder implements ChannelOutboundH
     }
 
     /**
-     * Will either run the delegating task directly calling {@link Runnable#run()} and return {@code true} or will
+     * Will either run the delegated task directly calling {@link Runnable#run()} and return {@code true} or will
      * offload the delegating task using {@link Executor#execute(Runnable)} and return {@code false}.
      *
      * If the task is offloaded it will take care to resume its work on the {@link EventExecutor} once there are no
@@ -1498,28 +1498,20 @@ public class SslHandler extends ByteToMessageDecoder implements ChannelOutboundH
     private boolean runDelegatedTasks(boolean inUnwrap) {
         if (delegatedTaskExecutor == ImmediateExecutor.INSTANCE || inEventLoop(delegatedTaskExecutor)) {
             // We should run the task directly in the EventExecutor thread and not offload at all.
-            for (;;) {
-                Runnable task = engine.getDelegatedTask();
-                if (task == null) {
-                    return true;
-                }
+            for (Runnable task; (task = engine.getDelegatedTask()) != null;) {
                 task.run();
             }
+            return true;
         } else {
-            final Runnable task = engine.getDelegatedTask();
-            if (task == null) {
-                // There was nothing to do just continue execute on the EventExecutor thread.
-                return true;
-            }
-            executeDelegatingTask(task, inUnwrap);
+            executeDelegatedTasks(inUnwrap);
             return false;
         }
     }
 
-    private void executeDelegatingTask(Runnable task, boolean inUnwrap) {
+    private void executeDelegatedTasks(boolean inUnwrap) {
         processTask = true;
         try {
-            delegatedTaskExecutor.execute(new SslTask(task, inUnwrap));
+            delegatedTaskExecutor.execute(new SslTasksRunner(inUnwrap));
         } catch (RejectedExecutionException e) {
             processTask = false;
             throw e;
@@ -1530,12 +1522,10 @@ public class SslHandler extends ByteToMessageDecoder implements ChannelOutboundH
      * {@link Runnable} that will be scheduled on the {@code delegatedTaskExecutor} and will take care
      * of resume work on the {@link EventExecutor} once the task was executed.
      */
-    private final class SslTask implements Runnable {
-        private final Runnable task;
+    private final class SslTasksRunner implements Runnable {
         private final boolean inUnwrap;
 
-        SslTask(Runnable task, boolean inUnwrap) {
-            this.task = task;
+        SslTasksRunner(boolean inUnwrap) {
             this.inUnwrap = inUnwrap;
         }
 
@@ -1603,15 +1593,7 @@ public class SslHandler extends ByteToMessageDecoder implements ChannelOutboundH
                 switch (status) {
                     // There is another task that needs to be executed and offloaded to the delegatingTaskExecutor.
                     case NEED_TASK:
-                        final Runnable task = engine.getDelegatedTask();
-
-                        if (task != null) {
-                            executeDelegatingTask(task, inUnwrap);
-                        } else {
-                            // There was no task to run so lets try to feed in more data to make progress.
-                            tryDecodeAgain();
-                        }
-
+                        executeDelegatedTasks(inUnwrap);
                         break;
 
                     // The handshake finished, lets notify about the completion of it and resume processing.
@@ -1665,22 +1647,17 @@ public class SslHandler extends ByteToMessageDecoder implements ChannelOutboundH
                         throw new AssertionError();
                 }
             } catch (Throwable cause) {
-                handleException(cause);
+                safeExceptionCaught(cause);
             }
         }
 
         @Override
         public void run() {
             try {
-                task.run();
-                if (engine.getHandshakeStatus() == HandshakeStatus.NEED_TASK) {
-                    final Runnable task = engine.getDelegatedTask();
-                    if (task != null) {
-                        delegatedTaskExecutor.execute(new SslTask(task, inUnwrap));
-                        return;
-                    }
-                    // There was no task to process lets continue on the EventExecutor.
+                for (Runnable task; (task = engine.getDelegatedTask()) != null;) {
+                    task.run();
                 }
+                assert engine.getHandshakeStatus() != HandshakeStatus.NEED_TASK;
                 // Jump back on the EventExecutor.
                 ctx.executor().execute(new Runnable() {
                     @Override
@@ -1689,23 +1666,25 @@ public class SslHandler extends ByteToMessageDecoder implements ChannelOutboundH
                     }
                 });
             } catch (final Throwable cause) {
-                processTask = false;
                 handleException(cause);
             }
         }
 
         private void handleException(final Throwable cause) {
             if (ctx.executor().inEventLoop()) {
+                processTask = false;
                 safeExceptionCaught(cause);
             } else {
                 try {
                     ctx.executor().execute(new Runnable() {
                         @Override
                         public void run() {
+                            processTask = false;
                             safeExceptionCaught(cause);
                         }
                     });
                 } catch (RejectedExecutionException ignore) {
+                    processTask = false;
                     // the context itself will handle the rejected exception when try to schedule the operation so
                     // ignore the RejectedExecutionException
                     ctx.fireExceptionCaught(cause);
