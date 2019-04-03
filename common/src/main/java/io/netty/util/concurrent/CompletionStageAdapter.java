@@ -15,6 +15,8 @@
  */
 package io.netty.util.concurrent;
 
+import static io.netty.util.concurrent.CompletionStageAdapter.Helper.*;
+
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.Executor;
@@ -29,34 +31,24 @@ import java.util.function.Function;
  *
  * @param <V> the value type.
  */
-final class CompletionStageAdapter<V> implements CompletionStage<V> {
-    private static final Object MARKER = new Object();
-    private static final Object ERROR_MARKER = new Object();
+interface CompletionStageAdapter<V> extends CompletionStage<V> {
 
-    private final Future<V> future;
-
-    CompletionStageAdapter(Future<V> future) {
-        this.future = future;
-    }
-
-    private EventExecutor executor() {
-        return future.executor();
-    }
+    abstract Future<V> future();
 
     @Override
-    public <U> CompletionStage<U> thenApply(Function<? super V, ? extends U> fn) {
+    default <U> CompletionStage<U> thenApply(Function<? super V, ? extends U> fn) {
         return thenApplyAsync(fn);
     }
 
     @Override
-    public <U> CompletionStage<U> thenApplyAsync(Function<? super V, ? extends U> fn) {
-        return thenApplyAsync(fn, executor());
+    default <U> CompletionStage<U> thenApplyAsync(Function<? super V, ? extends U> fn) {
+        return thenApplyAsync(fn, future().executor());
     }
 
     @Override
-    public <U> CompletionStage<U> thenApplyAsync(Function<? super V, ? extends U> fn, Executor executor) {
-        Promise<U> promise = executor().newPromise();
-        future.addListener(future -> {
+    default <U> CompletionStage<U> thenApplyAsync(Function<? super V, ? extends U> fn, Executor executor) {
+        Promise<U> promise = future().executor().newPromise();
+        future().addListener(future -> {
             Throwable cause = future.cause();
             if (cause == null) {
                 @SuppressWarnings("unchecked") V value = (V) future.getNow();
@@ -72,31 +64,20 @@ final class CompletionStageAdapter<V> implements CompletionStage<V> {
         return promise.asStage();
     }
 
-    private static <U, V> void thenApplyAsync0(Promise<U> promise, V value, Function<? super V, ? extends U> fn) {
-        final U result;
-        try {
-            result = fn.apply(value);
-        } catch (Throwable cause) {
-            promise.setFailure(cause);
-            return;
-        }
-        promise.setSuccess(result);
-    }
-
     @Override
-    public CompletionStage<Void> thenAccept(Consumer<? super V> action) {
+    default CompletionStage<Void> thenAccept(Consumer<? super V> action) {
         return thenAcceptAsync(action);
     }
 
     @Override
-    public CompletionStage<Void> thenAcceptAsync(Consumer<? super V> action) {
-        return thenAcceptAsync(action, executor());
+    default CompletionStage<Void> thenAcceptAsync(Consumer<? super V> action) {
+        return thenAcceptAsync(action, future().executor());
     }
 
     @Override
-    public CompletionStage<Void> thenAcceptAsync(Consumer<? super V> action, Executor executor) {
-        Promise<Void> promise = executor().newPromise();
-        future.addListener(future -> {
+    default CompletionStage<Void> thenAcceptAsync(Consumer<? super V> action, Executor executor) {
+        Promise<Void> promise = future().executor().newPromise();
+        future().addListener(future -> {
             Throwable cause = future.cause();
             if (cause == null) {
                 @SuppressWarnings("unchecked") V value = (V) future.getNow();
@@ -112,46 +93,37 @@ final class CompletionStageAdapter<V> implements CompletionStage<V> {
         return promise.asStage();
     }
 
-    private static <U, V> void thenAcceptAsync0(Promise<U> promise, V value, Consumer<? super V> action) {
-        try {
-            action.accept(value);
-            promise.setSuccess(null);
-        } catch (Throwable cause) {
-            promise.setFailure(cause);
-        }
-    }
-
     @Override
-    public CompletionStage<Void> thenRun(Runnable action) {
+    default CompletionStage<Void> thenRun(Runnable action) {
         return thenRunAsync(action);
     }
 
     @Override
-    public CompletionStage<Void> thenRunAsync(Runnable action) {
-        return thenRunAsync(action, executor());
+    default CompletionStage<Void> thenRunAsync(Runnable action) {
+        return thenRunAsync(action, future().executor());
     }
 
     @Override
-    public CompletionStage<Void> thenRunAsync(Runnable action, Executor executor) {
+    default CompletionStage<Void> thenRunAsync(Runnable action, Executor executor) {
         return thenAcceptAsync(ignore -> action.run(), executor);
     }
 
     @Override
-    public <U, V1> CompletionStage<V1> thenCombine(
+    default <U, V1> CompletionStage<V1> thenCombine(
             CompletionStage<? extends U> other, BiFunction<? super V, ? super U, ? extends V1> fn) {
         return thenCombineAsync(other, fn);
     }
 
     @Override
-    public <U, V1> CompletionStage<V1> thenCombineAsync(
+    default <U, V1> CompletionStage<V1> thenCombineAsync(
             CompletionStage<? extends U> other, BiFunction<? super V, ? super U, ? extends V1> fn) {
-        return thenCombineAsync(other, fn, executor());
+        return thenCombineAsync(other, fn, future().executor());
     }
 
     @Override
-    public <U, V1> CompletionStage<V1> thenCombineAsync(
+    default <U, V1> CompletionStage<V1> thenCombineAsync(
             CompletionStage<? extends U> other, BiFunction<? super V, ? super U, ? extends V1> fn, Executor executor) {
-        Promise<V1> promise = executor().newPromise();
+        Promise<V1> promise = future().executor().newPromise();
         AtomicReference<Object> reference = new AtomicReference<>(MARKER);
         whenCompleteAsync((v, error) -> {
             if (error != null) {
@@ -202,19 +174,19 @@ final class CompletionStageAdapter<V> implements CompletionStage<V> {
     }
 
     @Override
-    public <U> CompletionStage<Void> thenAcceptBoth(
+    default <U> CompletionStage<Void> thenAcceptBoth(
             CompletionStage<? extends U> other, BiConsumer<? super V, ? super U> action) {
         return thenAcceptBothAsync(other, action);
     }
 
     @Override
-    public <U> CompletionStage<Void> thenAcceptBothAsync(
+    default <U> CompletionStage<Void> thenAcceptBothAsync(
             CompletionStage<? extends U> other, BiConsumer<? super V, ? super U> action) {
-        return thenAcceptBothAsync(other, action, executor());
+        return thenAcceptBothAsync(other, action, future().executor());
     }
 
     @Override
-    public <U> CompletionStage<Void> thenAcceptBothAsync(
+    default <U> CompletionStage<Void> thenAcceptBothAsync(
             CompletionStage<? extends U> other, BiConsumer<? super V, ? super U> action, Executor executor) {
         return thenCombineAsync(other, (value, error) -> {
             action.accept(value, error);
@@ -223,17 +195,17 @@ final class CompletionStageAdapter<V> implements CompletionStage<V> {
     }
 
     @Override
-    public CompletionStage<Void> runAfterBoth(CompletionStage<?> other, Runnable action) {
+    default CompletionStage<Void> runAfterBoth(CompletionStage<?> other, Runnable action) {
         return runAfterBothAsync(other, action);
     }
 
     @Override
-    public CompletionStage<Void> runAfterBothAsync(CompletionStage<?> other, Runnable action) {
-        return runAfterBothAsync(other, action, executor());
+    default CompletionStage<Void> runAfterBothAsync(CompletionStage<?> other, Runnable action) {
+        return runAfterBothAsync(other, action, future().executor());
     }
 
     @Override
-    public CompletionStage<Void> runAfterBothAsync(CompletionStage<?> other, Runnable action, Executor executor) {
+    default CompletionStage<Void> runAfterBothAsync(CompletionStage<?> other, Runnable action, Executor executor) {
         return thenCombineAsync(other, (ignoreValue, ignoreError) -> {
             action.run();
             return null;
@@ -241,19 +213,19 @@ final class CompletionStageAdapter<V> implements CompletionStage<V> {
     }
 
     @Override
-    public <U> CompletionStage<U> applyToEither(CompletionStage<? extends V> other, Function<? super V, U> fn) {
+    default <U> CompletionStage<U> applyToEither(CompletionStage<? extends V> other, Function<? super V, U> fn) {
         return applyToEitherAsync(other, fn);
     }
 
     @Override
-    public <U> CompletionStage<U> applyToEitherAsync(CompletionStage<? extends V> other, Function<? super V, U> fn) {
-        return applyToEitherAsync(other, fn, executor());
+    default <U> CompletionStage<U> applyToEitherAsync(CompletionStage<? extends V> other, Function<? super V, U> fn) {
+        return applyToEitherAsync(other, fn, future().executor());
     }
 
     @Override
-    public <U> CompletionStage<U> applyToEitherAsync(
+    default <U> CompletionStage<U> applyToEitherAsync(
             CompletionStage<? extends V> other, Function<? super V, U> fn, Executor executor) {
-        Promise<U> promise = executor().newPromise();
+        Promise<U> promise = future().executor().newPromise();
 
         class AtomicBiConsumer extends AtomicReference<Object> implements BiConsumer<V, Throwable> {
 
@@ -286,19 +258,19 @@ final class CompletionStageAdapter<V> implements CompletionStage<V> {
     }
 
     @Override
-    public CompletionStage<Void> acceptEither(CompletionStage<? extends V> other, Consumer<? super V> action) {
+    default CompletionStage<Void> acceptEither(CompletionStage<? extends V> other, Consumer<? super V> action) {
         return acceptEitherAsync(other, action);
     }
 
     @Override
-    public CompletionStage<Void> acceptEitherAsync(CompletionStage<? extends V> other, Consumer<? super V> action) {
-        return acceptEitherAsync(other, action, executor());
+    default CompletionStage<Void> acceptEitherAsync(CompletionStage<? extends V> other, Consumer<? super V> action) {
+        return acceptEitherAsync(other, action, future().executor());
     }
 
     @Override
-    public CompletionStage<Void> acceptEitherAsync(
+    default CompletionStage<Void> acceptEitherAsync(
             CompletionStage<? extends V> other, Consumer<? super V> action, Executor executor) {
-        Promise<Void> promise = executor().newPromise();
+        Promise<Void> promise = future().executor().newPromise();
 
         class AtomicBiConsumer extends AtomicReference<Object> implements BiConsumer<V, Throwable> {
 
@@ -331,18 +303,18 @@ final class CompletionStageAdapter<V> implements CompletionStage<V> {
     }
 
     @Override
-    public CompletionStage<Void> runAfterEither(CompletionStage<?> other, Runnable action) {
+    default CompletionStage<Void> runAfterEither(CompletionStage<?> other, Runnable action) {
         return runAfterEitherAsync(other, action);
     }
 
     @Override
-    public CompletionStage<Void> runAfterEitherAsync(CompletionStage<?> other, Runnable action) {
-        return runAfterEitherAsync(other, action, future.executor());
+    default CompletionStage<Void> runAfterEitherAsync(CompletionStage<?> other, Runnable action) {
+        return runAfterEitherAsync(other, action, future().executor());
     }
 
     @Override
-    public CompletionStage<Void> runAfterEitherAsync(CompletionStage<?> other, Runnable action, Executor executor) {
-        Promise<Void> promise = executor().newPromise();
+    default CompletionStage<Void> runAfterEitherAsync(CompletionStage<?> other, Runnable action, Executor executor) {
+        Promise<Void> promise = future().executor().newPromise();
 
         class AtomicBiConsumer extends AtomicReference<Object> implements BiConsumer<Object, Throwable> {
 
@@ -375,20 +347,20 @@ final class CompletionStageAdapter<V> implements CompletionStage<V> {
     }
 
     @Override
-    public <U> CompletionStage<U> thenCompose(Function<? super V, ? extends CompletionStage<U>> fn) {
+    default <U> CompletionStage<U> thenCompose(Function<? super V, ? extends CompletionStage<U>> fn) {
         return thenComposeAsync(fn);
     }
 
     @Override
-    public <U> CompletionStage<U> thenComposeAsync(Function<? super V, ? extends CompletionStage<U>> fn) {
-        return thenComposeAsync(fn, executor());
+    default <U> CompletionStage<U> thenComposeAsync(Function<? super V, ? extends CompletionStage<U>> fn) {
+        return thenComposeAsync(fn, future().executor());
     }
 
     @Override
-    public <U> CompletionStage<U> thenComposeAsync(
+    default <U> CompletionStage<U> thenComposeAsync(
             Function<? super V, ? extends CompletionStage<U>> fn, Executor executor) {
-        Promise<U> promise = executor().newPromise();
-        future.addListener(f -> {
+        Promise<U> promise = future().executor().newPromise();
+        future().addListener(f -> {
            Throwable cause = f.cause();
            if (cause == null) {
                @SuppressWarnings("unchecked") V value = (V) f.getNow();
@@ -404,21 +376,10 @@ final class CompletionStageAdapter<V> implements CompletionStage<V> {
         return promise.asStage();
     }
 
-    private static <V, U> void thenComposeAsync0(
-            Promise<U> promise, Function<? super V, ? extends CompletionStage<U>> fn, V value) {
-        fn.apply(value).whenComplete((v, error) -> {
-            if (error != null) {
-                promise.setFailure(error);
-            } else {
-                promise.setSuccess(v);
-            }
-        });
-    }
-
     @Override
-    public CompletionStage<V> exceptionally(Function<Throwable, ? extends V> fn) {
-        Promise<V> promise = executor().newPromise();
-        future.addListener(f -> {
+    default CompletionStage<V> exceptionally(Function<Throwable, ? extends V> fn) {
+        Promise<V> promise = future().executor().newPromise();
+        future().addListener(f -> {
             Throwable error = f.cause();
             if (error != null) {
                 final V result;
@@ -438,19 +399,19 @@ final class CompletionStageAdapter<V> implements CompletionStage<V> {
     }
 
     @Override
-    public CompletionStage<V> whenComplete(BiConsumer<? super V, ? super Throwable> action) {
+    default CompletionStage<V> whenComplete(BiConsumer<? super V, ? super Throwable> action) {
         return whenCompleteAsync(action);
     }
 
     @Override
-    public CompletionStage<V> whenCompleteAsync(BiConsumer<? super V, ? super Throwable> action) {
-        return whenCompleteAsync(action, executor());
+    default CompletionStage<V> whenCompleteAsync(BiConsumer<? super V, ? super Throwable> action) {
+        return whenCompleteAsync(action, future().executor());
     }
 
     @Override
-    public CompletionStage<V> whenCompleteAsync(BiConsumer<? super V, ? super Throwable> action, Executor executor) {
-        Promise<V> promise = executor().newPromise();
-        future.addListener(f -> {
+    default CompletionStage<V> whenCompleteAsync(BiConsumer<? super V, ? super Throwable> action, Executor executor) {
+        Promise<V> promise = future().executor().newPromise();
+        future().addListener(f -> {
             if (inEventLoop(executor)) {
                 whenCompleteAsync0(promise, f, action);
             } else {
@@ -460,32 +421,20 @@ final class CompletionStageAdapter<V> implements CompletionStage<V> {
         return promise.asStage();
     }
 
-    @SuppressWarnings("unchecked")
-    private static <U, V> void whenCompleteAsync0(
-            Promise<U> promise, Future<? super V> f, BiConsumer<? super V, ? super Throwable> action) {
-        try {
-            action.accept((V) f.getNow(), f.cause());
-        } catch (Throwable cause) {
-            promise.setFailure(cause);
-            return;
-        }
-        promise.setSuccess(null);
-    }
-
     @Override
-    public <U> CompletionStage<U> handle(BiFunction<? super V, Throwable, ? extends U> fn) {
+    default <U> CompletionStage<U> handle(BiFunction<? super V, Throwable, ? extends U> fn) {
         return handleAsync(fn);
     }
 
     @Override
-    public <U> CompletionStage<U> handleAsync(BiFunction<? super V, Throwable, ? extends U> fn) {
-        return handleAsync(fn, executor());
+    default <U> CompletionStage<U> handleAsync(BiFunction<? super V, Throwable, ? extends U> fn) {
+        return handleAsync(fn, future().executor());
     }
 
     @Override
-    public <U> CompletionStage<U> handleAsync(BiFunction<? super V, Throwable, ? extends U> fn, Executor executor) {
-        Promise<U> promise = executor().newPromise();
-        future.addListener(f -> {
+    default <U> CompletionStage<U> handleAsync(BiFunction<? super V, Throwable, ? extends U> fn, Executor executor) {
+        Promise<U> promise = future().executor().newPromise();
+        future().addListener(f -> {
             if (inEventLoop(executor)) {
                 handleAsync0(promise, f, fn);
             } else {
@@ -495,33 +444,84 @@ final class CompletionStageAdapter<V> implements CompletionStage<V> {
         return promise.asStage();
     }
 
-    @SuppressWarnings("unchecked")
-    private static <U, V> void handleAsync0(
-            Promise<U> promise, Future<? super V> f, BiFunction<? super V, Throwable, ? extends U> fn) {
-        final U result;
-        try {
-            result = fn.apply((V) f.getNow(), f.cause());
-        } catch (Throwable cause) {
-            promise.setFailure(cause);
-            return;
-        }
-        promise.setSuccess(result);
-    }
-
-    private static boolean inEventLoop(Executor executor) {
-        return executor instanceof EventExecutor && ((EventExecutor) executor).inEventLoop();
-    }
-
-    private static void safeExecute(Executor executor, Runnable task, Promise<?> promise) {
-        try {
-            executor.execute(task);
-        } catch (Throwable cause) {
-            promise.setFailure(cause);
-        }
-    }
-
     @Override
-    public CompletableFuture<V> toCompletableFuture() {
+    default CompletableFuture<V> toCompletableFuture() {
         throw new UnsupportedOperationException();
+    }
+
+    static class Helper {
+        // All these members could be private if we access via Helper.XX rather than static import
+        static final Object MARKER = new Object();
+        static final Object ERROR_MARKER = new Object();
+
+        private Helper() { }
+
+        static <U, V> void thenApplyAsync0(Promise<U> promise, V value, Function<? super V, ? extends U> fn) {
+            final U result;
+            try {
+                result = fn.apply(value);
+            } catch (Throwable cause) {
+                promise.setFailure(cause);
+                return;
+            }
+            promise.setSuccess(result);
+        }
+
+        static <U, V> void thenAcceptAsync0(Promise<U> promise, V value, Consumer<? super V> action) {
+            try {
+                action.accept(value);
+                promise.setSuccess(null);
+            } catch (Throwable cause) {
+                promise.setFailure(cause);
+            }
+        }
+
+        static <V, U> void thenComposeAsync0(
+                Promise<U> promise, Function<? super V, ? extends CompletionStage<U>> fn, V value) {
+            fn.apply(value).whenComplete((v, error) -> {
+                if (error != null) {
+                    promise.setFailure(error);
+                } else {
+                    promise.setSuccess(v);
+                }
+            });
+        }
+
+        @SuppressWarnings("unchecked")
+        static <U, V> void whenCompleteAsync0(
+                Promise<U> promise, Future<? super V> f, BiConsumer<? super V, ? super Throwable> action) {
+            try {
+                action.accept((V) f.getNow(), f.cause());
+            } catch (Throwable cause) {
+                promise.setFailure(cause);
+                return;
+            }
+            promise.setSuccess(null);
+        }
+
+        @SuppressWarnings("unchecked")
+        static <U, V> void handleAsync0(
+                Promise<U> promise, Future<? super V> f, BiFunction<? super V, Throwable, ? extends U> fn) {
+            final U result;
+            try {
+                result = fn.apply((V) f.getNow(), f.cause());
+            } catch (Throwable cause) {
+                promise.setFailure(cause);
+                return;
+            }
+            promise.setSuccess(result);
+        }
+        
+        static boolean inEventLoop(Executor executor) {
+            return executor instanceof EventExecutor && ((EventExecutor) executor).inEventLoop();
+        }
+
+        static void safeExecute(Executor executor, Runnable task, Promise<?> promise) {
+            try {
+                executor.execute(task);
+            } catch (Throwable cause) {
+                promise.setFailure(cause);
+            }
+        }
     }
 }

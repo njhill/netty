@@ -208,6 +208,11 @@ public interface Future<V> extends java.util.concurrent.Future<V> {
      * all updates as well.
      */
     default CompletionStage<V> asStage() {
-        return new CompletionStageAdapter<>(this);
+        return new CompletionStageAdapter<V>() {
+            @Override
+            public Future<V> future() {
+                return Future.this;
+            }
+        };
     }
 }

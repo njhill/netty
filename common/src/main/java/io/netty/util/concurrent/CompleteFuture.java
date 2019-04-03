@@ -18,16 +18,14 @@ package io.netty.util.concurrent;
 
 import static java.util.Objects.requireNonNull;
 
-import java.util.concurrent.CompletionStage;
 import java.util.concurrent.TimeUnit;
 
 /**
  * A skeletal {@link Future} implementation which represents a {@link Future} which has been completed already.
  */
-public abstract class CompleteFuture<V> implements Future<V> {
+public abstract class CompleteFuture<V> implements Future<V>, CompletionStageFuture<V> {
 
     private final EventExecutor executor;
-    private final CompletionStage<V> stage;
 
     /**
      * Creates a new instance.
@@ -36,7 +34,6 @@ public abstract class CompleteFuture<V> implements Future<V> {
      */
     protected CompleteFuture(EventExecutor executor) {
         this.executor = executor;
-        stage = new CompletionStageAdapter<>(this);
     }
 
     /**
@@ -149,10 +146,5 @@ public abstract class CompleteFuture<V> implements Future<V> {
     @Override
     public boolean cancel(boolean mayInterruptIfRunning) {
         return false;
-    }
-
-    @Override
-    public CompletionStage<V> asStage() {
-        return stage;
     }
 }
