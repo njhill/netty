@@ -16,6 +16,7 @@
 package io.netty.buffer;
 
 import io.netty.util.ByteProcessor;
+import io.netty.util.IllegalReferenceCountException;
 import io.netty.util.ReferenceCounted;
 
 import java.io.IOException;
@@ -556,6 +557,27 @@ public abstract class ByteBuf implements ReferenceCounted, Comparable<ByteBuf> {
     public abstract int ensureWritable(int minWritableBytes, boolean force);
 
     /**
+     * Equivalent to calling {@link #discardReadBytes()}.{@link #capacity(int)}, except that:
+     * <ul>
+     * <li>No attempt is made to preserve data outside of the buffer's currently readable range</li>
+     * <li>A single copy operation is performed at most, instead of possibly two separate copies. The
+     * total number of bytes copied will also usually be much smaller (and never larger)</li>
+     * <li>If the buffer does not support this combined operation then {@code false} is returned -
+     * in which case the caller may choose to use the more expensive formulation above, or to copy the
+     * readable range into the beginning of a newly allocated buffer of the desired capacity (the
+     * latter should usually be cheaper)</li>
+     * </ul>
+     *
+     * @return {@code true} if successful, {@code false} if this buffer does not implement a combined
+     *     copy-and-discard operation
+     *
+     * @throws IllegalArgumentException if the {@code newCapacity} is greater than {@link #maxCapacity()}
+     */
+    public boolean capacityAndDiscard(int newCapacity) {
+        return false;
+    }
+
+    /**
      * Gets a boolean at the specified absolute (@code index) in this buffer.
      * This method does not modify the {@code readerIndex} or {@code writerIndex}
      * of this buffer.
@@ -575,7 +597,7 @@ public abstract class ByteBuf implements ReferenceCounted, Comparable<ByteBuf> {
      *         if the specified {@code index} is less than {@code 0} or
      *         {@code index + 1} is greater than {@code this.capacity}
      */
-    public abstract byte  getByte(int index);
+    public abstract byte getByte(int index);
 
     /**
      * Gets an unsigned byte at the specified absolute {@code index} in this
@@ -2476,5 +2498,15 @@ public abstract class ByteBuf implements ReferenceCounted, Comparable<ByteBuf> {
      */
     boolean isAccessible() {
         return refCnt() != 0;
+    }
+
+    /**
+     * Should be called by every method that tries to access the buffers content to check
+     * if the buffer was released before.
+     */
+    protected final void ensureAccessible() {
+        if (AbstractByteBuf.checkAccessible && !isAccessible()) {
+            throw new IllegalReferenceCountException(0);
+        }
     }
 }

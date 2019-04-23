@@ -277,7 +277,8 @@ public class CompositeByteBuf extends AbstractReferenceCountedByteBuf implements
             checkComponentIndex(cIndex);
 
             // No need to consolidate - just add a component to the list.
-            Component c = newComponent(ensureAccessible(buffer), 0);
+            buffer.ensureAccessible();
+            Component c = newComponent(buffer, 0);
             int readableBytes = c.length();
 
             addComp(cIndex, c);
@@ -296,13 +297,6 @@ public class CompositeByteBuf extends AbstractReferenceCountedByteBuf implements
                 buffer.release();
             }
         }
-    }
-
-    private static ByteBuf ensureAccessible(final ByteBuf buf) {
-        if (checkAccessible && !buf.isAccessible()) {
-            throw new IllegalReferenceCountException(0);
-        }
-        return buf;
     }
 
     @SuppressWarnings("deprecation")
@@ -371,7 +365,8 @@ public class CompositeByteBuf extends AbstractReferenceCountedByteBuf implements
                 if (b == null) {
                     break;
                 }
-                Component c = newComponent(ensureAccessible(b), nextOffset);
+                b.ensureAccessible();
+                Component c = newComponent(b, nextOffset);
                 components[ci] = c;
                 nextOffset = c.endOffset;
             }

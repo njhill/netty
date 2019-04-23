@@ -18,6 +18,7 @@ package io.netty.buffer;
 import io.netty.util.AsciiString;
 import io.netty.util.ByteProcessor;
 import io.netty.util.CharsetUtil;
+import io.netty.util.IllegalReferenceCountException;
 import io.netty.util.concurrent.FastThreadLocal;
 import io.netty.util.internal.MathUtil;
 import io.netty.util.internal.ObjectPool;
@@ -838,6 +839,92 @@ public final class ByteBufUtil {
             return new String(array, 0, offset, len);
         }
         return new String(array, offset, len, charset);
+    }
+
+    /**
+     * Discards read bytes and/or increases capacity as needed to ensure there is room to write the specified
+     * minimum number of bytes. Internally copies the smallest number of bytes necessary, zero if possible.
+     * <p>
+     * If {@code minimum <= (maxFastWritableBytes() + readerIndex())} then no internal re-allocation will
+     * take place, but read bytes may be discarded. If also {@code minimum <= maxFastWritableBytes()}
+     * then no bytes will be discarded (no data copying will take place).
+     * <p>
+     * If {@code preferred > minimum}, capacity will be further increased to result in the largest number
+     * of writable bytes {@code <= preferred} such that no additional copying/reallocation cost is incurred,
+     * apart from possibly larger regions of internal memory being allocated.
+     * <p>
+     * Read bytes will be discarded if there is no <i>additional</i> cost to doing so, even if not otherwise
+     * required to meet the target.
+     * <p>
+     * This method is not intended for use with composite buffers.
+     *
+     * @param preserveDataIfMultiRef will not copy/move or discard any existing data in the underlying buffer
+     *     if the current ref count is greater than 1. This ensures any existing derived buffers are not
+     *     corrupted and remain valid
+     *
+     * @return {@code true} if successful, {@code false} if the minimum writable space could not be attained
+     *     <i>or</i> an internal reallocation is required but can't be done in conjunction with discarding
+     *     read bytes. If {@code false} is returned the the buffer will remain unchanged and it is recommended
+     *     to explicitly copy existing data to a newly allocated buffer of the desired size.
+     *
+     * @throws IllegalArgumentException if {@code preferred < minimum}
+     */
+    public static boolean fastEnsureWritable(ByteBuf buf, int minimum, int preferred, boolean preserveDataIfMultiRef) {
+        checkPositiveOrZero(minimum, "minimum");
+        if (preferred < minimum) {
+            throw new IllegalArgumentException("preferred: " + preferred + " (expected: >= " + minimum + ')');
+        }
+        if (buf.isReadOnly()) {
+            return false;
+        }
+        int discardable = buf.isContiguous() ? buf.readerIndex() : 0;
+        int maxWritableBytes = buf.maxWritableBytes();
+        if (minimum > maxWritableBytes + discardable) {
+            // Not possible to attain minimum
+            buf.ensureAccessible();
+            return false;
+        }
+        int maxFastWritableBytes = buf.maxFastWritableBytes();
+        boolean accessibilityChecked = false;
+        if (preserveDataIfMultiRef) {
+            int refCnt = buf.refCnt();
+            if (refCnt != 1) {
+                if (AbstractByteBuf.checkAccessible && refCnt <= 0) {
+                    throw new IllegalReferenceCountException(0);
+                }
+                if (minimum > maxFastWritableBytes) {
+                    return false;
+                }
+                // This will ensure existing data in the buffer is not moved
+                // (no discard of read bytes and no internal reallocation)
+                discardable = 0;
+                maxWritableBytes = maxFastWritableBytes;
+            }
+            accessibilityChecked = true;
+        }
+        if (minimum <= maxFastWritableBytes + discardable) {
+            // Reallocation not needed
+            if (minimum > maxFastWritableBytes
+                    || (discardable > 0 && discardable == buf.writerIndex())) {
+                // Discard is required and/or "free"
+                buf.discardReadBytes();
+                maxFastWritableBytes += discardable;
+                maxWritableBytes += discardable;
+                accessibilityChecked = true;
+            }
+            int writableBytes = buf.writableBytes();
+            if (preferred > writableBytes && maxWritableBytes > writableBytes) {
+                // This will not trigger an internal reallocation
+                // per definition of maxFastWritableBytes
+                buf.capacity(buf.writerIndex() + Math.min(preferred, maxFastWritableBytes));
+                accessibilityChecked = true;
+            }
+            if (!accessibilityChecked) {
+                buf.ensureAccessible();
+            }
+            return true;
+        }
+        return buf.capacityAndDiscard(buf.writerIndex() + Math.min(preferred, maxWritableBytes));
     }
 
     /**

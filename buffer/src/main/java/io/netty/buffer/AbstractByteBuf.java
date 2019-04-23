@@ -18,7 +18,6 @@ package io.netty.buffer;
 import io.netty.util.AsciiString;
 import io.netty.util.ByteProcessor;
 import io.netty.util.CharsetUtil;
-import io.netty.util.IllegalReferenceCountException;
 import io.netty.util.ResourceLeakDetector;
 import io.netty.util.ResourceLeakDetectorFactory;
 import io.netty.util.internal.PlatformDependent;
@@ -214,6 +213,10 @@ public abstract class AbstractByteBuf extends ByteBuf {
     @Override
     public ByteBuf discardReadBytes() {
         ensureAccessible();
+        return discardReadBytes0();
+    }
+
+    protected ByteBuf discardReadBytes0() {
         if (readerIndex == 0) {
             return this;
         }
@@ -1496,16 +1499,6 @@ public abstract class AbstractByteBuf extends ByteBuf {
                         "readerIndex(%d) + length(%d) exceeds writerIndex(%d): %s",
                         readerIndex, minimumReadableBytes, writerIndex, this));
             }
-        }
-    }
-
-    /**
-     * Should be called by every method that tries to access the buffers content to check
-     * if the buffer was released before.
-     */
-    protected final void ensureAccessible() {
-        if (checkAccessible && !isAccessible()) {
-            throw new IllegalReferenceCountException(0);
         }
     }
 
