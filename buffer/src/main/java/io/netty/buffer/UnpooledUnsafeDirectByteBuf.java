@@ -477,8 +477,8 @@ public class UnpooledUnsafeDirectByteBuf extends AbstractReferenceCountedByteBuf
 
     @Override
     public ByteBuffer nioBuffer(int index, int length) {
-        checkIndex(index, length);
-        return ((ByteBuffer) buffer.duplicate().position(index).limit(index + length)).slice();
+        ensureAccessible();
+        return  PlatformDependent.sliceDirectBuffer(buffer, index, length);
     }
 
     @Override

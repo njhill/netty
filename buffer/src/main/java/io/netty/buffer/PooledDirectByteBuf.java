@@ -17,6 +17,7 @@
 package io.netty.buffer;
 
 import io.netty.util.Recycler;
+import io.netty.util.internal.PlatformDependent;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -404,8 +405,7 @@ final class PooledDirectByteBuf extends PooledByteBuf<ByteBuffer> {
     @Override
     public ByteBuffer nioBuffer(int index, int length) {
         checkIndex(index, length);
-        index = idx(index);
-        return ((ByteBuffer) memory.duplicate().position(index).limit(index + length)).slice();
+        return PlatformDependent.sliceDirectBuffer(memory, idx(index), length);
     }
 
     @Override

@@ -322,8 +322,7 @@ final class PooledUnsafeDirectByteBuf extends PooledByteBuf<ByteBuffer> {
     @Override
     public ByteBuffer nioBuffer(int index, int length) {
         checkIndex(index, length);
-        index = idx(index);
-        return ((ByteBuffer) memory.duplicate().position(index).limit(index + length)).slice();
+        return PlatformDependent.sliceDirectBuffer(memory, idx(index), length);
     }
 
     @Override

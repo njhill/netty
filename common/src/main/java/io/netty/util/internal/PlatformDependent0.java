@@ -220,7 +220,8 @@ final class PlatformDependent0 {
                             public Object run() {
                                 try {
                                     final Constructor<?> constructor =
-                                            direct.getClass().getDeclaredConstructor(long.class, int.class);
+                                            direct.getClass().getDeclaredConstructor(
+                                                    long.class, int.class, Object.class);
                                     Throwable cause = ReflectionUtil.trySetAccessible(constructor, true);
                                     if (cause != null) {
                                         return cause;
@@ -238,7 +239,7 @@ final class PlatformDependent0 {
                     address = UNSAFE.allocateMemory(1);
                     // try to use the constructor now
                     try {
-                        ((Constructor<?>) maybeDirectBufferConstructor).newInstance(address, 1);
+                        ((Constructor<?>) maybeDirectBufferConstructor).newInstance(address, 1, null);
                         directBufferConstructor = (Constructor<?>) maybeDirectBufferConstructor;
                         logger.debug("direct buffer constructor: available");
                     } catch (InstantiationException e) {
@@ -442,14 +443,14 @@ final class PlatformDependent0 {
     }
 
     static ByteBuffer reallocateDirectNoCleaner(ByteBuffer buffer, int capacity) {
-        return newDirectBuffer(UNSAFE.reallocateMemory(directBufferAddress(buffer), capacity), capacity);
+        return newDirectBuffer(UNSAFE.reallocateMemory(directBufferAddress(buffer), capacity), capacity, null);
     }
 
     static ByteBuffer allocateDirectNoCleaner(int capacity) {
         // Calling malloc with capacity of 0 may return a null ptr or a memory address that can be used.
         // Just use 1 to make it safe to use in all cases:
         // See: http://pubs.opengroup.org/onlinepubs/009695399/functions/malloc.html
-        return newDirectBuffer(UNSAFE.allocateMemory(Math.max(1, capacity)), capacity);
+        return newDirectBuffer(UNSAFE.allocateMemory(Math.max(1, capacity)), capacity, null);
     }
 
     static boolean hasAllocateArrayMethod() {
@@ -466,11 +467,11 @@ final class PlatformDependent0 {
         }
     }
 
-    static ByteBuffer newDirectBuffer(long address, int capacity) {
+    static ByteBuffer newDirectBuffer(long address, int capacity, Object parent) {
         ObjectUtil.checkPositiveOrZero(capacity, "capacity");
 
         try {
-            return (ByteBuffer) DIRECT_BUFFER_CONSTRUCTOR.newInstance(address, capacity);
+            return (ByteBuffer) DIRECT_BUFFER_CONSTRUCTOR.newInstance(address, capacity, parent);
         } catch (Throwable cause) {
             // Not expected to ever throw!
             if (cause instanceof Error) {
@@ -478,6 +479,15 @@ final class PlatformDependent0 {
             }
             throw new Error(cause);
         }
+    }
+
+    static ByteBuffer sliceDirectBuffer(ByteBuffer buffer, int index, int length) {
+        ObjectUtil.checkPositiveOrZero(index, "index");
+        ObjectUtil.checkPositiveOrZero(length, "length");
+        if (index + length > buffer.limit()) {
+            throw new IndexOutOfBoundsException();
+        }
+        return newDirectBuffer(directBufferAddress(buffer) + index, length, buffer);
     }
 
     static long directBufferAddress(ByteBuffer buffer) {

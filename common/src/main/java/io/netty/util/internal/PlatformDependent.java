@@ -410,7 +410,7 @@ public final class PlatformDependent {
 
     public static ByteBuffer directBuffer(long memoryAddress, int size) {
         if (PlatformDependent0.hasDirectBufferNoCleanerConstructor()) {
-            return PlatformDependent0.newDirectBuffer(memoryAddress, size);
+            return PlatformDependent0.newDirectBuffer(memoryAddress, size, null);
         }
         throw new UnsupportedOperationException(
                 "sun.misc.Unsafe or java.nio.DirectByteBuffer.<init>(long, int) not available");
@@ -680,6 +680,12 @@ public final class PlatformDependent {
 
     public static boolean useDirectBufferNoCleaner() {
         return USE_DIRECT_BUFFER_NO_CLEANER;
+    }
+
+    public static ByteBuffer sliceDirectBuffer(ByteBuffer buffer, int index, int length) {
+        return PlatformDependent0.hasDirectBufferNoCleanerConstructor() && !buffer.isReadOnly()
+                ? PlatformDependent0.sliceDirectBuffer(buffer, index, length)
+                        : ((ByteBuffer) buffer.duplicate().position(index).limit(index + length)).slice();
     }
 
     /**
