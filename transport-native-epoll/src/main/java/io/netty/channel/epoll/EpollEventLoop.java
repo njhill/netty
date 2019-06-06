@@ -34,7 +34,9 @@ import io.netty.util.internal.logging.InternalLoggerFactory;
 import java.io.IOException;
 import java.util.Queue;
 import java.util.concurrent.Executor;
-import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
+import java.util.concurrent.atomic.AtomicLongFieldUpdater;
+
+import org.jctools.queues.ExtendedQueue;
 
 import static java.lang.Math.min;
 
@@ -43,8 +45,8 @@ import static java.lang.Math.min;
  */
 class EpollEventLoop extends SingleThreadEventLoop {
     private static final InternalLogger logger = InternalLoggerFactory.getInstance(EpollEventLoop.class);
-    private static final AtomicIntegerFieldUpdater<EpollEventLoop> WAKEN_UP_UPDATER =
-            AtomicIntegerFieldUpdater.newUpdater(EpollEventLoop.class, "wakenUp");
+    private static final AtomicLongFieldUpdater<EpollEventLoop> WAKEUP_INDEX_UPDATER =
+            AtomicLongFieldUpdater.newUpdater(EpollEventLoop.class, "wakeupIndex");
 
     static {
         // Ensure JNI is initialized by the time this class is loaded by this time!
@@ -72,8 +74,7 @@ class EpollEventLoop extends SingleThreadEventLoop {
             return epollWaitNow();
         }
     };
-    @SuppressWarnings("unused") // AtomicIntegerFieldUpdater
-    private volatile int wakenUp;
+    private volatile long wakeupIndex;
     private volatile int ioRatio = 50;
 
     // See http://man7.org/linux/man-pages/man2/timerfd_create.2.html.
@@ -81,7 +82,7 @@ class EpollEventLoop extends SingleThreadEventLoop {
 
     EpollEventLoop(EventLoopGroup parent, Executor executor, int maxEvents,
                    SelectStrategy strategy, RejectedExecutionHandler rejectedExecutionHandler) {
-        super(parent, executor, false, DEFAULT_MAX_PENDING_TASKS, rejectedExecutionHandler);
+        super(parent, executor, true, DEFAULT_MAX_PENDING_TASKS, rejectedExecutionHandler);
         selectStrategy = ObjectUtil.checkNotNull(strategy, "strategy");
         if (maxEvents == 0) {
             allowGrowing = true;
@@ -166,7 +167,8 @@ class EpollEventLoop extends SingleThreadEventLoop {
 
     @Override
     protected void wakeup(boolean inEventLoop) {
-        if (!inEventLoop && WAKEN_UP_UPDATER.getAndSet(this, 1) == 0) {
+        // Now only used for shutdown (and executeAfterEventLoopIteration but that can be changed)
+        if (!inEventLoop) {
             // write to the evfd which will then wake-up epoll_wait(...)
             Native.eventFdWrite(eventFd.intValue(), 1L);
         }
@@ -218,7 +220,12 @@ class EpollEventLoop extends SingleThreadEventLoop {
     @Override
     protected Queue<Runnable> newTaskQueue(int maxPendingTasks) {
         // This event loop never calls takeTask()
-        return maxPendingTasks == Integer.MAX_VALUE ? PlatformDependent.<Runnable>newMpscQueue()
+        
+        // Just a hack for now since these are private in superclass
+        if (taskQueue == null) {
+            return taskQueue = new ExtendedQueue<Runnable>(1024);
+        }
+        return tailQueue = maxPendingTasks == Integer.MAX_VALUE ? PlatformDependent.<Runnable>newMpscQueue()
                                                     : PlatformDependent.<Runnable>newMpscQueue(maxPendingTasks);
     }
 
@@ -269,6 +276,48 @@ class EpollEventLoop extends SingleThreadEventLoop {
         return Native.epollBusyWait(epollFd, events);
     }
 
+    // just copies of the private superclass fields
+    private ExtendedQueue<Runnable> taskQueue;
+    private Queue<Runnable> tailQueue;
+    
+    // this tracks the queue's internal consumer index (even number)
+    private long consumerIndex;
+
+    @Override
+    protected Runnable pollTask() {
+        Runnable r = super.pollTask();
+        if (r != null) {
+            consumerIndex += 2L;
+        }
+        return r;
+    }
+
+    @Override
+    protected void addTask(Runnable task) {
+        ObjectUtil.checkNotNull(task, "task");
+        if (isShutdown()) {
+            reject();
+        }
+        long pIndex = taskQueue.offerAndGetProducerIndex(task);
+        if (pIndex == -1L) {
+            reject(task);
+        }
+        if (!inEventLoop() && wakesUpForTask(task)) {
+            long matchIndex;
+            while ((matchIndex = wakeupIndex) == -1L) {
+                // spin
+            }
+            if (pIndex == matchIndex) {
+                Native.eventFdWrite(eventFd.intValue(), 1L);
+            }
+        }
+    }
+
+    @Override
+    protected boolean hasTasks() {
+        return consumerIndex != taskQueue.lvProducerIndex() || !tailQueue.isEmpty();
+    }
+
     @Override
     protected void run() {
         boolean hasTasks = hasTasks();
@@ -284,12 +333,12 @@ class EpollEventLoop extends SingleThreadEventLoop {
                         break;
 
                     case SelectStrategy.SELECT:
-                        wakenUp = 0;
+                        wakeupIndex = -1L;
                         if (!hasTasks()) {
+                            WAKEUP_INDEX_UPDATER.lazySet(this, consumerIndex);
                             strategy = epollWait();
-                        }
-                        if (strategy > 0 || wakenUp == 0) {
-                            wakenUp = 1;
+                        } else {
+                            WAKEUP_INDEX_UPDATER.lazySet(this, 0L);
                         }
                         // fallthrough
                     default:
