@@ -314,7 +314,7 @@
     <skipOsgiTestsuite>false</skipOsgiTestsuite>
     <skipAutobahnTestsuite>false</skipAutobahnTestsuite>
     <skipHttp2Testsuite>false</skipHttp2Testsuite>
-    <skipJapicmp>false</skipJapicmp>
+    <skipJapicmp>true</skipJapicmp>
     <graalvm.version>19.0.0</graalvm.version>
     <!-- By default skip native testsuite as it requires a custom environment with graalvm installed -->
     <skipNativeImageTestsuite>true</skipNativeImageTestsuite>

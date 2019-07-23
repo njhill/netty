@@ -44,8 +44,8 @@ import static java.lang.Math.min;
  */
 class EpollEventLoop extends SingleThreadEventLoop {
     private static final InternalLogger logger = InternalLoggerFactory.getInstance(EpollEventLoop.class);
-    private static final AtomicIntegerFieldUpdater<EpollEventLoop> WAKEN_UP_UPDATER =
-            AtomicIntegerFieldUpdater.newUpdater(EpollEventLoop.class, "wakenUp");
+    private static final AtomicIntegerFieldUpdater<EpollEventLoop> WAKE_COUNTER_UPDATER =
+            AtomicIntegerFieldUpdater.newUpdater(EpollEventLoop.class, "wakeCounter");
 
     static {
         // Ensure JNI is initialized by the time this class is loaded by this time!
@@ -73,8 +73,8 @@ class EpollEventLoop extends SingleThreadEventLoop {
             return epollWaitNow();
         }
     };
-    @SuppressWarnings("unused") // AtomicIntegerFieldUpdater
-    private volatile int wakenUp;
+    private volatile int wakeCounter = 1;
+    private long eventWriteCount;
     private volatile int ioRatio = 50;
 
     // See http://man7.org/linux/man-pages/man2/timerfd_create.2.html.
@@ -177,7 +177,7 @@ class EpollEventLoop extends SingleThreadEventLoop {
 
     @Override
     protected void wakeup(boolean inEventLoop) {
-        if (!inEventLoop && WAKEN_UP_UPDATER.getAndSet(this, 1) == 0) {
+        if (!inEventLoop && wakeCounter == 0 && WAKE_COUNTER_UPDATER.getAndIncrement(this) == 0) {
             // write to the evfd which will then wake-up epoll_wait(...)
             Native.eventFdWrite(eventFd.intValue(), 1L);
         }
@@ -298,11 +298,15 @@ class EpollEventLoop extends SingleThreadEventLoop {
                         break;
 
                     case SelectStrategy.SELECT:
-                        if (wakenUp == 1) {
-                            wakenUp = 0;
-                        }
-                        if (!hasTasks()) {
-                            strategy = epollWait();
+                        wakeCounter = 0;
+                        try {
+                            if (!hasTasks()) {
+                                strategy = epollWait();
+                            }
+                        } finally {
+                            if (wakeCounter != 0 || WAKE_COUNTER_UPDATER.getAndIncrement(this) != 0) {
+                                eventWriteCount++;
+                            }
                         }
                         // fallthrough
                     default:
@@ -454,6 +458,9 @@ class EpollEventLoop extends SingleThreadEventLoop {
                 logger.warn("Failed to close the epoll fd.", e);
             }
             try {
+                while (eventWriteCount != 0L) {
+                    eventWriteCount -= Native.eventFdRead(eventFd.intValue());
+                }
                 eventFd.close();
             } catch (IOException e) {
                 logger.warn("Failed to close the event fd.", e);
