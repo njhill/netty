@@ -82,7 +82,7 @@ public final class Native {
     private static native int eventFd();
     private static native int timerFd();
     public static native void eventFdWrite(int fd, long value);
-    public static native void eventFdRead(int fd);
+    public static native long eventFdRead(int fd);
     static native void timerFdRead(int fd);
 
     public static FileDescriptor newEpollCreate() {

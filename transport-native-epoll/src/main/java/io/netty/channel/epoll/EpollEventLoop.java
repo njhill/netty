@@ -73,8 +73,8 @@ class EpollEventLoop extends SingleThreadEventLoop {
             return epollWaitNow();
         }
     };
-    @SuppressWarnings("unused") // AtomicIntegerFieldUpdater
     private volatile int wakenUp;
+    private long eventWriteCount;
     private volatile int ioRatio = 50;
 
     // See http://man7.org/linux/man-pages/man2/timerfd_create.2.html.
@@ -298,11 +298,15 @@ class EpollEventLoop extends SingleThreadEventLoop {
                         break;
 
                     case SelectStrategy.SELECT:
-                        if (wakenUp == 1) {
-                            wakenUp = 0;
-                        }
-                        if (!hasTasks()) {
-                            strategy = epollWait();
+                        wakenUp = 0;
+                        try {
+                            if (!hasTasks()) {
+                                strategy = epollWait();
+                            }
+                        } finally {
+                            if (wakenUp == 1 || WAKEN_UP_UPDATER.getAndSet(this, 1) == 1) {
+                                eventWriteCount++;
+                            }
                         }
                         // fallthrough
                     default:
@@ -449,14 +453,22 @@ class EpollEventLoop extends SingleThreadEventLoop {
     protected void cleanup() {
         try {
             try {
-                epollFd.close();
-            } catch (IOException e) {
-                logger.warn("Failed to close the epoll fd.", e);
-            }
-            try {
+                while (eventWriteCount != 0L) {
+                    long read = Native.eventFdRead(eventFd.intValue());
+                    if (read > 0) {
+                        eventWriteCount -= read;
+                    } else {
+                        Native.epollWait(epollFd, events, timerFd, -1, -1);
+                    }
+                }
                 eventFd.close();
             } catch (IOException e) {
                 logger.warn("Failed to close the event fd.", e);
+            }
+            try {
+                epollFd.close();
+            } catch (IOException e) {
+                logger.warn("Failed to close the epoll fd.", e);
             }
             try {
                 timerFd.close();
