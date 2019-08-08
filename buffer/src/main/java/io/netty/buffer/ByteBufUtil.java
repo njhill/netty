@@ -46,7 +46,7 @@ import static io.netty.util.internal.MathUtil.isOutOfBounds;
 import static io.netty.util.internal.ObjectUtil.checkNotNull;
 import static io.netty.util.internal.ObjectUtil.checkPositiveOrZero;
 import static io.netty.util.internal.StringUtil.NEWLINE;
-import static io.netty.util.internal.StringUtil.isSurrogate;
+import static io.netty.util.internal.StringUtil.isNonSurrogate;
 
 /**
  * A collection of utility methods that is related with handling {@link ByteBuf},
@@ -550,7 +550,9 @@ public final class ByteBufUtil {
             } else if (buf instanceof AbstractByteBuf) {
                 AbstractByteBuf byteBuf = (AbstractByteBuf) buf;
                 byteBuf.ensureWritable0(reserveBytes);
-                int written = writeUtf8(byteBuf, byteBuf.writerIndex, seq, start, end);
+                int written = byteBuf.isDirect()
+                        ? writeUtf8Direct(byteBuf, byteBuf.writerIndex, seq, start, end)
+                        : writeUtf8(byteBuf, byteBuf.writerIndex, seq, start, end);
                 byteBuf.writerIndex += written;
                 return written;
             } else if (buf instanceof WrappedByteBuf) {
@@ -565,43 +567,38 @@ public final class ByteBufUtil {
     }
 
     static int writeUtf8(AbstractByteBuf buffer, int writerIndex, CharSequence seq, int len) {
-        return writeUtf8(buffer, writerIndex, seq, 0, len);
+        return buffer.isDirect() ? writeUtf8Direct(buffer, writerIndex, seq, 0, len)
+                : writeUtf8(buffer, writerIndex, seq, 0, len);
     }
 
-    // Fast-Path implementation
+    // Fast-Path implementation - non-direct buffers
     static int writeUtf8(AbstractByteBuf buffer, int writerIndex, CharSequence seq, int start, int end) {
-        int oldWriterIndex = writerIndex;
+        final int oldWriterIndex = writerIndex;
 
         // We can use the _set methods as these not need to do any index checks and reference checks.
         // This is possible as we called ensureWritable(...) before.
         for (int i = start; i < end; i++) {
             char c = seq.charAt(i);
             if (c < 0x80) {
-                buffer._setByte(writerIndex++, (byte) c);
+                buffer._setByte(writerIndex++, c);
             } else if (c < 0x800) {
-                buffer._setByte(writerIndex++, (byte) (0xc0 | (c >> 6)));
-                buffer._setByte(writerIndex++, (byte) (0x80 | (c & 0x3f)));
-            } else if (isSurrogate(c)) {
-                if (!Character.isHighSurrogate(c)) {
-                    buffer._setByte(writerIndex++, WRITE_UTF_UNKNOWN);
-                    continue;
-                }
-                final char c2;
-                try {
-                    // Surrogate Pair consumes 2 characters. Optimistically try to get the next character to avoid
-                    // duplicate bounds checking with charAt. If an IndexOutOfBoundsException is thrown we will
-                    // re-throw a more informative exception describing the problem.
-                    c2 = seq.charAt(++i);
-                } catch (IndexOutOfBoundsException ignored) {
+                buffer._setByte(writerIndex++, 0xc0 | (c >> 6));
+                buffer._setByte(writerIndex++, 0x80 | (c & 0x3f));
+            } else if (isNonSurrogate(c)) {
+                buffer._setByte(writerIndex++, 0xe0 | (c >> 12));
+                buffer._setByte(writerIndex++, 0x80 | ((c >> 6) & 0x3f));
+                buffer._setByte(writerIndex++, 0x80 | (c & 0x3f));
+            } else if (Character.isHighSurrogate(c)) {
+                // Surrogate Pair consumes 2 characters.
+                if (++i == end) {
                     buffer._setByte(writerIndex++, WRITE_UTF_UNKNOWN);
                     break;
                 }
                 // Extra method to allow inlining the rest of writeUtf8 which is the most likely code path.
-                writerIndex = writeUtf8Surrogate(buffer, writerIndex, c, c2);
+                writerIndex = writeUtf8Surrogate(buffer, writerIndex, c, seq.charAt(i));
             } else {
-                buffer._setByte(writerIndex++, (byte) (0xe0 | (c >> 12)));
-                buffer._setByte(writerIndex++, (byte) (0x80 | ((c >> 6) & 0x3f)));
-                buffer._setByte(writerIndex++, (byte) (0x80 | (c & 0x3f)));
+                // Low surrogate without a preceding high surrogate
+                buffer._setByte(writerIndex++, WRITE_UTF_UNKNOWN);
             }
         }
         return writerIndex - oldWriterIndex;
@@ -611,15 +608,59 @@ public final class ByteBufUtil {
         if (!Character.isLowSurrogate(c2)) {
             buffer._setByte(writerIndex++, WRITE_UTF_UNKNOWN);
             buffer._setByte(writerIndex++, Character.isHighSurrogate(c2) ? WRITE_UTF_UNKNOWN : c2);
-            return writerIndex;
         }
         int codePoint = Character.toCodePoint(c, c2);
         // See http://www.unicode.org/versions/Unicode7.0.0/ch03.pdf#G2630.
-        buffer._setByte(writerIndex++, (byte) (0xf0 | (codePoint >> 18)));
-        buffer._setByte(writerIndex++, (byte) (0x80 | ((codePoint >> 12) & 0x3f)));
-        buffer._setByte(writerIndex++, (byte) (0x80 | ((codePoint >> 6) & 0x3f)));
-        buffer._setByte(writerIndex++, (byte) (0x80 | (codePoint & 0x3f)));
+        buffer._setByte(writerIndex++, 0xf0 | (codePoint >> 18));
+        buffer._setByte(writerIndex++, 0x80 | ((codePoint >> 12) & 0x3f));
+        buffer._setByte(writerIndex++, 0x80 | ((codePoint >> 6) & 0x3f));
+        buffer._setByte(writerIndex++, 0x80 | (codePoint & 0x3f));
         return writerIndex;
+    }
+
+    // Fast-Path implementation - direct buffers
+    static int writeUtf8Direct(AbstractByteBuf buffer, int writerIndex, CharSequence seq, int start, int end) {
+        final int oldWriterIndex = writerIndex;
+
+        // With direct buffers it's faster to use _setShort/_setInt in preference to multiple _setBytes
+        for (int i = start; i < end; i++) {
+            char c = seq.charAt(i);
+            if (c < 0x80) {
+                buffer._setByte(writerIndex++, c);
+            } else if (c < 0x800) {
+                buffer._setShort(writerIndex, (c << 2 & 0x1f00) | (c & 0x3f) | 0xc080);
+                writerIndex += 2;
+            } else if (isNonSurrogate(c)) {
+                buffer._setByte(writerIndex, 0xe0 | (c >> 12));
+                buffer._setShort(writerIndex + 1, (c << 2 & 0x3f00) | (c & 0x3f) | 0x8080);
+                writerIndex += 3;
+            } else if (Character.isHighSurrogate(c)) {
+                // Surrogate Pair consumes 2 characters.
+                if (++i == end) {
+                    buffer._setByte(writerIndex++, WRITE_UTF_UNKNOWN);
+                    break;
+                }
+                // Extra method to allow inlining the rest of writeUtf8 which is the most likely code path.
+                writerIndex = writeUtf8SurrogateDirect(buffer, writerIndex, c, seq.charAt(i));
+            } else {
+                // Low surrogate without a preceding high surrogate
+                buffer._setByte(writerIndex++, WRITE_UTF_UNKNOWN);
+            }
+        }
+        return writerIndex - oldWriterIndex;
+    }
+
+    private static int writeUtf8SurrogateDirect(AbstractByteBuf buffer, int writerIndex, char c, char c2) {
+        if (!Character.isLowSurrogate(c2)) {
+            buffer._setByte(writerIndex, WRITE_UTF_UNKNOWN);
+            buffer._setByte(writerIndex + 1, Character.isHighSurrogate(c2) ? WRITE_UTF_UNKNOWN : c2);
+            return writerIndex + 2;
+        }
+        int codePoint = Character.toCodePoint(c, c2);
+        // See http://www.unicode.org/versions/Unicode7.0.0/ch03.pdf#G2630.
+        buffer._setInt(writerIndex, (codePoint << 6 & 0x7000000) | (codePoint << 4 & 0x3f0000)
+                | (codePoint << 2 & 0x3f00) | (codePoint & 0x3f) | 0xf0808080);
+        return writerIndex + 4;
     }
 
     /**
@@ -678,31 +719,21 @@ public final class ByteBufUtil {
             if (c < 0x800) {
                 // branchless version of: (c <= 127 ? 0:1) + 1
                 encodedLength += ((0x7f - c) >>> 31) + 1;
-            } else if (isSurrogate(c)) {
-                if (!Character.isHighSurrogate(c)) {
-                    encodedLength++;
-                    // WRITE_UTF_UNKNOWN
-                    continue;
-                }
-                final char c2;
-                try {
-                    // Surrogate Pair consumes 2 characters. Optimistically try to get the next character to avoid
-                    // duplicate bounds checking with charAt.
-                    c2 = seq.charAt(++i);
-                } catch (IndexOutOfBoundsException ignored) {
+            } else if (isNonSurrogate(c)) {
+                encodedLength += 3;
+            } else if (Character.isHighSurrogate(c)) {
+                // Surrogate Pair consumes 2 characters.
+                if (++i == end) {
                     encodedLength++;
                     // WRITE_UTF_UNKNOWN
                     break;
                 }
-                if (!Character.isLowSurrogate(c2)) {
-                    // WRITE_UTF_UNKNOWN + (Character.isHighSurrogate(c2) ? WRITE_UTF_UNKNOWN : c2)
-                    encodedLength += 2;
-                    continue;
-                }
                 // See http://www.unicode.org/versions/Unicode7.0.0/ch03.pdf#G2630.
-                encodedLength += 4;
+                // In false case: WRITE_UTF_UNKNOWN + (Character.isHighSurrogate(c2) ? WRITE_UTF_UNKNOWN : c2)
+                encodedLength += Character.isLowSurrogate(seq.charAt(i)) ? 4 : 2;
             } else {
-                encodedLength += 3;
+                encodedLength++;
+                // WRITE_UTF_UNKNOWN
             }
         }
         return encodedLength;

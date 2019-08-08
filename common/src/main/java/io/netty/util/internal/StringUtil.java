@@ -564,6 +564,13 @@ public final class StringUtil {
         return c >= '\uD800' && c <= '\uDFFF';
     }
 
+    /**
+     * Logical complement of {@link #isSurrogate(char)}
+     */
+    public static boolean isNonSurrogate(char c) {
+        return c < '\uD800' || c > '\uDFFF';
+    }
+
     private static boolean isDoubleQuote(char c) {
         return c == DOUBLE_QUOTE;
     }

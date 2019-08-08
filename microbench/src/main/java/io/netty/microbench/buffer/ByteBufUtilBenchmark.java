@@ -18,10 +18,13 @@ package io.netty.microbench.buffer;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufUtil;
 import io.netty.buffer.Unpooled;
+import io.netty.buffer.UnpooledByteBufAllocator;
+import io.netty.buffer.UnpooledDirectByteBuf;
 import io.netty.microbench.util.AbstractMicrobenchmark;
 import io.netty.util.CharsetUtil;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.Measurement;
+import org.openjdk.jmh.annotations.Param;
 import org.openjdk.jmh.annotations.Scope;
 import org.openjdk.jmh.annotations.Setup;
 import org.openjdk.jmh.annotations.State;
@@ -34,6 +37,33 @@ import org.openjdk.jmh.annotations.Warmup;
 @Measurement(iterations = 10)
 public class
     ByteBufUtilBenchmark extends AbstractMicrobenchmark {
+
+    public enum ByteBufType {
+        DIRECT_UNSAFE {
+            @Override
+            ByteBuf newBuffer(int length) {
+                return Unpooled.directBuffer(length);
+            }
+        },
+        DIRECT_SAFE {
+            @Override
+            ByteBuf newBuffer(int length) {
+                return new UnpooledDirectByteBuf(
+                        UnpooledByteBufAllocator.DEFAULT, length, length);
+            }
+        },
+        HEAP {
+            @Override
+            ByteBuf newBuffer(int length) {
+                return Unpooled.buffer(length);
+            }
+        };
+        abstract ByteBuf newBuffer(int length);
+    }
+
+    @Param
+    public ByteBufType bufferType;
+
     private ByteBuf buffer;
     private ByteBuf wrapped;
     private ByteBuf asciiBuffer;
@@ -48,20 +78,29 @@ public class
     @Setup
     public void setup() {
         // Use buffer sizes that will also allow to write UTF-8 without grow the buffer
-        buffer = Unpooled.directBuffer(512);
-        wrapped = Unpooled.unreleasableBuffer(Unpooled.directBuffer(512));
+        buffer = bufferType.newBuffer(4096);
+        wrapped = Unpooled.unreleasableBuffer(bufferType.newBuffer(4096));
         asciiSequence = new StringBuilder(128);
         for (int i = 0; i < 128; i++) {
             asciiSequence.append('a');
         }
         ascii = asciiSequence.toString();
 
-        // Generate some mixed UTF-8 String for benchmark
-        utf8Sequence = new StringBuilder(128);
-        char[] chars = "Some UTF-8 like äÄ∏ŒŒ".toCharArray();
-        for (int i = 0; i < 128; i++) {
-            utf8Sequence.append(chars[i % chars.length]);
-        }
+        // Mixed UTF-8 String for benchmark
+        utf8Sequence = new StringBuilder("Nettyは、プロトコルサーバーやクライアントなどのネットワークアプリケーションの迅速かつ簡単な開発を可能にするNIO"
+                + "クライアントサーバーフレームワークです。 TCPやUDPソケットサーバーなどのネットワークプログラミングを大幅に簡素化および合理化します。\n\n"
+                + "「迅速かつ簡単」ということは、結果のアプリケーションが保守性やパフォーマンスの問題に苦しむことを意味するものではありません。 Nettyは、FTP、"
+                + "SMTP、HTTP、さまざまなバイナリおよびテキストベースのレガシープロトコルなど、多くのプロトコルの実装から得られた経験を使用して慎重に設計されています。"
+                  + "その結果、Nettyは妥協することなく開発の容易さ、パフォーマンス、安定性、柔軟性を実現する方法を見つけることに成功しました。"
+                + "Netty - это клиент-серверная инфраструктура NIO, которая позволяет быстро и легко разрабатывать "
+                + "сетевые приложения, такие как серверы протоколов и клиенты. Это значительно упрощает и "
+                + "оптимизирует сетевое программирование, такое как сокеты TCP и UDP.\n\n"
+                + "«Быстро и просто» не означает, что получающееся приложение будет страдать от ремонтопригодности "
+                + "или проблемы с производительностью. Netty был тщательно спроектирован с учетом опыта, "
+                + "накопленного при реализации многих протоколов, таких как FTP, SMTP, HTTP, а также различных "
+                + "двоичных и текстовых устаревших протоколов. В результате Netty удалось найти способ достижения "
+                + "простоты разработки, производительности, стабильности и гибкости без компромиссов.");
+
         utf8 = utf8Sequence.toString();
         asciiSequence = utf8Sequence;
 
@@ -141,6 +180,12 @@ public class
     public void writeUtf8String() {
         buffer.resetWriterIndex();
         ByteBufUtil.writeUtf8(buffer, utf8);
+    }
+
+    @Benchmark
+    public void writeUtf8AsciiString() {
+        buffer.resetWriterIndex();
+        ByteBufUtil.writeUtf8(buffer, ascii);
     }
 
     @Benchmark
