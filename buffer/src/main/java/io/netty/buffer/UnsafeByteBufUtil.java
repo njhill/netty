@@ -24,7 +24,6 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.ReadOnlyBufferException;
 
-import static io.netty.util.internal.MathUtil.isOutOfBounds;
 import static io.netty.util.internal.ObjectUtil.checkNotNull;
 import static io.netty.util.internal.PlatformDependent.BIG_ENDIAN_NATIVE_ORDER;
 
@@ -425,10 +424,9 @@ final class UnsafeByteBufUtil {
     }
 
     static void setZero(byte[] array, int index, int length) {
-        if (length == 0) {
-            return;
+        if (length != 0) {
+            PlatformDependent.setMemory(array, index, length, ZERO);
         }
-        PlatformDependent.setMemory(array, index, length, ZERO);
     }
 
     static ByteBuf copy(AbstractByteBuf buf, long addr, int index, int length) {
@@ -461,13 +459,7 @@ final class UnsafeByteBufUtil {
         }
     }
 
-    static void getBytes(AbstractByteBuf buf, long addr, int index, ByteBuf dst, int dstIndex, int length) {
-        buf.checkIndex(index, length);
-        checkNotNull(dst, "dst");
-        if (isOutOfBounds(dstIndex, length, dst.capacity())) {
-            throw new IndexOutOfBoundsException("dstIndex: " + dstIndex);
-        }
-
+    static void _getBytes(AbstractByteBuf buf, long addr, int index, ByteBuf dst, int dstIndex, int length) {
         if (dst.hasMemoryAddress()) {
             PlatformDependent.copyMemory(addr, dst.memoryAddress() + dstIndex, length);
         } else if (dst.hasArray()) {
@@ -477,20 +469,15 @@ final class UnsafeByteBufUtil {
         }
     }
 
-    static void getBytes(AbstractByteBuf buf, long addr, int index, byte[] dst, int dstIndex, int length) {
-        buf.checkIndex(index, length);
-        checkNotNull(dst, "dst");
-        if (isOutOfBounds(dstIndex, length, dst.length)) {
-            throw new IndexOutOfBoundsException("dstIndex: " + dstIndex);
-        }
+    static void _getBytes(AbstractByteBuf buf, long addr, int index, byte[] dst, int dstIndex, int length) {
         if (length != 0) {
             PlatformDependent.copyMemory(addr, dst, dstIndex, length);
         }
     }
 
-    static void getBytes(AbstractByteBuf buf, long addr, int index, ByteBuffer dst) {
-        buf.checkIndex(index, dst.remaining());
-        if (dst.remaining() == 0) {
+    static void _getBytes(AbstractByteBuf buf, long addr, int index, ByteBuffer dst) {
+        final int length = dst.remaining();
+        if (length == 0) {
             return;
         }
 
@@ -501,24 +488,19 @@ final class UnsafeByteBufUtil {
             }
             // Copy to direct memory
             long dstAddress = PlatformDependent.directBufferAddress(dst);
-            PlatformDependent.copyMemory(addr, dstAddress + dst.position(), dst.remaining());
-            dst.position(dst.position() + dst.remaining());
+            PlatformDependent.copyMemory(addr, dstAddress + dst.position(), length);
+            dst.position(dst.position() + length);
         } else if (dst.hasArray()) {
             // Copy to array
-            PlatformDependent.copyMemory(addr, dst.array(), dst.arrayOffset() + dst.position(), dst.remaining());
-            dst.position(dst.position() + dst.remaining());
+            PlatformDependent.copyMemory(addr, dst.array(), dst.arrayOffset() + dst.position(), length);
+            dst.position(dst.position() + length);
         } else  {
             dst.put(buf.nioBuffer());
         }
     }
 
     static void setBytes(AbstractByteBuf buf, long addr, int index, ByteBuf src, int srcIndex, int length) {
-        buf.checkIndex(index, length);
-        checkNotNull(src, "src");
-        if (isOutOfBounds(srcIndex, length, src.capacity())) {
-            throw new IndexOutOfBoundsException("srcIndex: " + srcIndex);
-        }
-
+        buf.checkSrcIndex(index, length, srcIndex, checkNotNull(src, "src").capacity());
         if (length != 0) {
             if (src.hasMemoryAddress()) {
                 PlatformDependent.copyMemory(src.memoryAddress() + srcIndex, addr, length);
@@ -569,19 +551,15 @@ final class UnsafeByteBufUtil {
     private static void setSingleBytes(final AbstractByteBuf buf, final long addr, final int index,
                                        final ByteBuffer src, final int length) {
         buf.checkIndex(index, length);
-        final int srcPosition = src.position();
         final int srcLimit = src.limit();
         long dstAddr = addr;
-        for (int srcIndex = srcPosition; srcIndex < srcLimit; srcIndex++) {
-            final byte value = src.get(srcIndex);
-            PlatformDependent.putByte(dstAddr, value);
-            dstAddr++;
+        for (int srcIndex = src.position(); srcIndex < srcLimit; srcIndex++) {
+            PlatformDependent.putByte(dstAddr++, src.get(srcIndex));
         }
         src.position(srcLimit);
     }
 
-    static void getBytes(AbstractByteBuf buf, long addr, int index, OutputStream out, int length) throws IOException {
-        buf.checkIndex(index, length);
+    static void _getBytes(AbstractByteBuf buf, long addr, int index, OutputStream out, int length) throws IOException {
         if (length != 0) {
             int len = Math.min(length, ByteBufUtil.WRITE_CHUNK_SIZE);
             if (len <= ByteBufUtil.MAX_TL_ARRAY_LEN || !buf.alloc().isDirectBufferPooled()) {
@@ -612,11 +590,9 @@ final class UnsafeByteBufUtil {
     }
 
     static void setZero(long addr, int length) {
-        if (length == 0) {
-            return;
+        if (length != 0) {
+            PlatformDependent.setMemory(addr, length, ZERO);
         }
-
-        PlatformDependent.setMemory(addr, length, ZERO);
     }
 
     static UnpooledUnsafeDirectByteBuf newUnsafeDirectByteBuf(

@@ -117,27 +117,23 @@ final class PooledUnsafeDirectByteBuf extends PooledByteBuf<ByteBuffer> {
     }
 
     @Override
-    public ByteBuf getBytes(int index, ByteBuf dst, int dstIndex, int length) {
-        UnsafeByteBufUtil.getBytes(this, addr(index), index, dst, dstIndex, length);
-        return this;
+    void _getBytes(int index, ByteBuf dst, int dstIndex, int length, boolean internal) {
+        UnsafeByteBufUtil._getBytes(this, addr(index), index, dst, dstIndex, length);
     }
 
     @Override
-    public ByteBuf getBytes(int index, byte[] dst, int dstIndex, int length) {
-        UnsafeByteBufUtil.getBytes(this, addr(index), index, dst, dstIndex, length);
-        return this;
+    void _getBytes(int index, byte[] dst, int dstIndex, int length, boolean internal) {
+        UnsafeByteBufUtil._getBytes(this, addr(index), index, dst, dstIndex, length);
     }
 
     @Override
-    public ByteBuf getBytes(int index, ByteBuffer dst) {
-        UnsafeByteBufUtil.getBytes(this, addr(index), index, dst);
-        return this;
+    void _getBytes(int index, ByteBuffer dst, boolean internal) {
+        UnsafeByteBufUtil._getBytes(this, addr(index), index, dst);
     }
 
     @Override
-    public ByteBuf getBytes(int index, OutputStream out, int length) throws IOException {
-        UnsafeByteBufUtil.getBytes(this, addr(index), index, out, length);
-        return this;
+    void _getBytes(int index, OutputStream out, int length, boolean internal) throws IOException {
+        UnsafeByteBufUtil._getBytes(this, addr(index), index, out, length);
     }
 
     @Override

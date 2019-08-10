@@ -98,6 +98,12 @@ public class UnpooledUnsafeDirectByteBuf extends UnpooledDirectByteBuf {
     }
 
     @Override
+    public short getShortLE(int index) {
+        checkIndex(index, 2);
+        return _getShortLE(index);
+    }
+
+    @Override
     protected short _getShort(int index) {
         return UnsafeByteBufUtil.getShort(addr(index));
     }
@@ -111,6 +117,12 @@ public class UnpooledUnsafeDirectByteBuf extends UnpooledDirectByteBuf {
     public int getUnsignedMedium(int index) {
         checkIndex(index, 3);
         return _getUnsignedMedium(index);
+    }
+
+    @Override
+    public int getUnsignedMediumLE(int index) {
+        checkIndex(index, 3);
+        return _getUnsignedMediumLE(index);
     }
 
     @Override
@@ -130,6 +142,12 @@ public class UnpooledUnsafeDirectByteBuf extends UnpooledDirectByteBuf {
     }
 
     @Override
+    public int getIntLE(int index) {
+        checkIndex(index, 4);
+        return _getIntLE(index);
+    }
+
+    @Override
     protected int _getInt(int index) {
         return UnsafeByteBufUtil.getInt(addr(index));
     }
@@ -146,6 +164,12 @@ public class UnpooledUnsafeDirectByteBuf extends UnpooledDirectByteBuf {
     }
 
     @Override
+    public long getLongLE(int index) {
+        checkIndex(index, 8);
+        return _getLongLE(index);
+    }
+
+    @Override
     protected long _getLong(int index) {
         return UnsafeByteBufUtil.getLong(addr(index));
     }
@@ -156,19 +180,18 @@ public class UnpooledUnsafeDirectByteBuf extends UnpooledDirectByteBuf {
     }
 
     @Override
-    public ByteBuf getBytes(int index, ByteBuf dst, int dstIndex, int length) {
-        UnsafeByteBufUtil.getBytes(this, addr(index), index, dst, dstIndex, length);
-        return this;
+    void _getBytes(int index, ByteBuf dst, int dstIndex, int length, boolean internal) {
+        UnsafeByteBufUtil._getBytes(this, addr(index), index, dst, dstIndex, length);
     }
 
     @Override
-    void getBytes(int index, byte[] dst, int dstIndex, int length, boolean internal) {
-        UnsafeByteBufUtil.getBytes(this, addr(index), index, dst, dstIndex, length);
+    void _getBytes(int index, byte[] dst, int dstIndex, int length, boolean internal) {
+        UnsafeByteBufUtil._getBytes(this, addr(index), index, dst, dstIndex, length);
     }
 
     @Override
-    void getBytes(int index, ByteBuffer dst, boolean internal) {
-        UnsafeByteBufUtil.getBytes(this, addr(index), index, dst);
+    void _getBytes(int index, ByteBuffer dst, boolean internal) {
+        UnsafeByteBufUtil._getBytes(this, addr(index), index, dst);
     }
 
     @Override
@@ -191,6 +214,13 @@ public class UnpooledUnsafeDirectByteBuf extends UnpooledDirectByteBuf {
     }
 
     @Override
+    public ByteBuf setShortLE(int index, int value) {
+        checkIndex(index, 2);
+        _setShortLE(index, value);
+        return this;
+    }
+
+    @Override
     protected void _setShort(int index, int value) {
         UnsafeByteBufUtil.setShort(addr(index), value);
     }
@@ -204,6 +234,13 @@ public class UnpooledUnsafeDirectByteBuf extends UnpooledDirectByteBuf {
     public ByteBuf setMedium(int index, int value) {
         checkIndex(index, 3);
         _setMedium(index, value);
+        return this;
+    }
+
+    @Override
+    public ByteBuf setMediumLE(int index, int value) {
+        checkIndex(index, 3);
+        _setMediumLE(index, value);
         return this;
     }
 
@@ -225,6 +262,13 @@ public class UnpooledUnsafeDirectByteBuf extends UnpooledDirectByteBuf {
     }
 
     @Override
+    public ByteBuf setIntLE(int index, int value) {
+        checkIndex(index, 4);
+        _setIntLE(index, value);
+        return this;
+    }
+
+    @Override
     protected void _setInt(int index, int value) {
         UnsafeByteBufUtil.setInt(addr(index), value);
     }
@@ -238,6 +282,13 @@ public class UnpooledUnsafeDirectByteBuf extends UnpooledDirectByteBuf {
     public ByteBuf setLong(int index, long value) {
         checkIndex(index, 8);
         _setLong(index, value);
+        return this;
+    }
+
+    @Override
+    public ByteBuf setLongLE(int index, long value) {
+        checkIndex(index, 8);
+        _setLongLE(index, value);
         return this;
     }
 
@@ -270,8 +321,8 @@ public class UnpooledUnsafeDirectByteBuf extends UnpooledDirectByteBuf {
     }
 
     @Override
-    void getBytes(int index, OutputStream out, int length, boolean internal) throws IOException {
-        UnsafeByteBufUtil.getBytes(this, addr(index), index, out, length);
+    void _getBytes(int index, OutputStream out, int length, boolean internal) throws IOException {
+        UnsafeByteBufUtil._getBytes(this, addr(index), index, out, length);
     }
 
     @Override

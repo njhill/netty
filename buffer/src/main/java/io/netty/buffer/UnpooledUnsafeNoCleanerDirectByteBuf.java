@@ -40,26 +40,7 @@ class UnpooledUnsafeNoCleanerDirectByteBuf extends UnpooledUnsafeDirectByteBuf {
     }
 
     @Override
-    public ByteBuf capacity(int newCapacity) {
-        checkNewCapacity(newCapacity);
-
-        int oldCapacity = capacity();
-        if (newCapacity == oldCapacity) {
-            return this;
-        }
-
-        ByteBuffer newBuffer = reallocateDirect(buffer, newCapacity);
-
-        if (newCapacity < oldCapacity) {
-            if (readerIndex() < newCapacity) {
-                if (writerIndex() > newCapacity) {
-                    writerIndex(newCapacity);
-                }
-            } else {
-                setIndex(newCapacity, newCapacity);
-            }
-        }
-        setByteBuffer(newBuffer, false);
-        return this;
+    void replaceBuffer(int newCapacity, int bytesToCopy) {
+        setByteBuffer(reallocateDirect(buffer, newCapacity), false);
     }
 }

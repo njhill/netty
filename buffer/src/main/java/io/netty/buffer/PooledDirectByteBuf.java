@@ -18,9 +18,6 @@ package io.netty.buffer;
 
 import io.netty.util.Recycler;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
 import java.nio.ByteBuffer;
 
 final class PooledDirectByteBuf extends PooledByteBuf<ByteBuffer> {
@@ -104,75 +101,6 @@ final class PooledDirectByteBuf extends PooledByteBuf<ByteBuffer> {
     }
 
     @Override
-    public ByteBuf getBytes(int index, ByteBuf dst, int dstIndex, int length) {
-        checkDstIndex(index, length, dstIndex, dst.capacity());
-        if (dst.hasArray()) {
-            getBytes(index, dst.array(), dst.arrayOffset() + dstIndex, length);
-        } else if (dst.nioBufferCount() > 0) {
-            for (ByteBuffer bb: dst.nioBuffers(dstIndex, length)) {
-                int bbLen = bb.remaining();
-                getBytes(index, bb);
-                index += bbLen;
-            }
-        } else {
-            dst.setBytes(dstIndex, this, index, length);
-        }
-        return this;
-    }
-
-    @Override
-    public ByteBuf getBytes(int index, byte[] dst, int dstIndex, int length) {
-        checkDstIndex(index, length, dstIndex, dst.length);
-        _internalNioBuffer(index, length, true).get(dst, dstIndex, length);
-        return this;
-    }
-
-    @Override
-    public ByteBuf readBytes(byte[] dst, int dstIndex, int length) {
-        checkDstIndex(length, dstIndex, dst.length);
-        _internalNioBuffer(readerIndex, length, false).get(dst, dstIndex, length);
-        readerIndex += length;
-        return this;
-    }
-
-    @Override
-    public ByteBuf getBytes(int index, ByteBuffer dst) {
-        dst.put(duplicateInternalNioBuffer(index, dst.remaining()));
-        return this;
-    }
-
-    @Override
-    public ByteBuf readBytes(ByteBuffer dst) {
-        int length = dst.remaining();
-        checkReadableBytes(length);
-        dst.put(_internalNioBuffer(readerIndex, length, false));
-        readerIndex += length;
-        return this;
-    }
-
-    @Override
-    public ByteBuf getBytes(int index, OutputStream out, int length) throws IOException {
-        getBytes(index, out, length, false);
-        return this;
-    }
-
-    private void getBytes(int index, OutputStream out, int length, boolean internal) throws IOException {
-        checkIndex(index, length);
-        if (length == 0) {
-            return;
-        }
-        ByteBufUtil.readBytes(alloc(), internal ? internalNioBuffer() : memory.duplicate(), idx(index), length, out);
-    }
-
-    @Override
-    public ByteBuf readBytes(OutputStream out, int length) throws IOException {
-        checkReadableBytes(length);
-        getBytes(readerIndex, out, length, true);
-        readerIndex += length;
-        return this;
-    }
-
-    @Override
     protected void _setByte(int index, int value) {
         memory.put(idx(index), (byte) value);
     }
@@ -221,59 +149,6 @@ final class PooledDirectByteBuf extends PooledByteBuf<ByteBuffer> {
     @Override
     protected void _setLongLE(int index, long value) {
         _setLong(index, ByteBufUtil.swapLong(value));
-    }
-
-    @Override
-    public ByteBuf setBytes(int index, ByteBuf src, int srcIndex, int length) {
-        checkSrcIndex(index, length, srcIndex, src.capacity());
-        if (src.hasArray()) {
-            setBytes(index, src.array(), src.arrayOffset() + srcIndex, length);
-        } else if (src.nioBufferCount() > 0) {
-            for (ByteBuffer bb: src.nioBuffers(srcIndex, length)) {
-                int bbLen = bb.remaining();
-                setBytes(index, bb);
-                index += bbLen;
-            }
-        } else {
-            src.getBytes(srcIndex, this, index, length);
-        }
-        return this;
-    }
-
-    @Override
-    public ByteBuf setBytes(int index, byte[] src, int srcIndex, int length) {
-        checkSrcIndex(index, length, srcIndex, src.length);
-        _internalNioBuffer(index, length, false).put(src, srcIndex, length);
-        return this;
-    }
-
-    @Override
-    public ByteBuf setBytes(int index, ByteBuffer src) {
-        int length = src.remaining();
-        checkIndex(index, length);
-        ByteBuffer tmpBuf = internalNioBuffer();
-        if (src == tmpBuf) {
-            src = src.duplicate();
-        }
-
-        index = idx(index);
-        tmpBuf.clear().position(index).limit(index + length);
-        tmpBuf.put(src);
-        return this;
-    }
-
-    @Override
-    public int setBytes(int index, InputStream in, int length) throws IOException {
-        checkIndex(index, length);
-        byte[] tmp = ByteBufUtil.threadLocalTempArray(length);
-        int readBytes = in.read(tmp, 0, length);
-        if (readBytes <= 0) {
-            return readBytes;
-        }
-        ByteBuffer tmpBuf = internalNioBuffer();
-        tmpBuf.clear().position(idx(index));
-        tmpBuf.put(tmp, 0, readBytes);
-        return readBytes;
     }
 
     @Override

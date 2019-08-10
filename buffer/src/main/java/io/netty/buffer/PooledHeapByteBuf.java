@@ -92,38 +92,29 @@ class PooledHeapByteBuf extends PooledByteBuf<byte[]> {
     }
 
     @Override
-    public final ByteBuf getBytes(int index, ByteBuf dst, int dstIndex, int length) {
-        checkDstIndex(index, length, dstIndex, dst.capacity());
+    void _getBytes(int index, ByteBuf dst, int dstIndex, int length, boolean internal) {
         if (dst.hasMemoryAddress()) {
             PlatformDependent.copyMemory(memory, idx(index), dst.memoryAddress() + dstIndex, length);
         } else if (dst.hasArray()) {
-            getBytes(index, dst.array(), dst.arrayOffset() + dstIndex, length);
+            _getBytes(index, dst.array(), dst.arrayOffset() + dstIndex, length, internal);
         } else {
             dst.setBytes(dstIndex, memory, idx(index), length);
         }
-        return this;
     }
 
     @Override
-    public final ByteBuf getBytes(int index, byte[] dst, int dstIndex, int length) {
-        checkDstIndex(index, length, dstIndex, dst.length);
+    void _getBytes(int index, byte[] dst, int dstIndex, int length, boolean internal) {
         System.arraycopy(memory, idx(index), dst, dstIndex, length);
-        return this;
     }
 
     @Override
-    public final ByteBuf getBytes(int index, ByteBuffer dst) {
-        int length = dst.remaining();
-        checkIndex(index, length);
-        dst.put(memory, idx(index), length);
-        return this;
+    void _getBytes(int index, ByteBuffer dst, boolean internal) {
+        dst.put(memory, idx(index), dst.remaining());
     }
 
     @Override
-    public final ByteBuf getBytes(int index, OutputStream out, int length) throws IOException {
-        checkIndex(index, length);
+    void _getBytes(int index, OutputStream out, int length, boolean internal) throws IOException {
         out.write(memory, idx(index), length);
-        return this;
     }
 
     @Override
@@ -213,12 +204,6 @@ class PooledHeapByteBuf extends PooledByteBuf<byte[]> {
     }
 
     @Override
-    final ByteBuffer duplicateInternalNioBuffer(int index, int length) {
-        checkIndex(index, length);
-        return ByteBuffer.wrap(memory, idx(index), length).slice();
-    }
-
-    @Override
     public final boolean hasArray() {
         return true;
     }
@@ -247,5 +232,9 @@ class PooledHeapByteBuf extends PooledByteBuf<byte[]> {
     @Override
     protected final ByteBuffer newInternalNioBuffer(byte[] memory) {
         return ByteBuffer.wrap(memory);
+    }
+
+    protected final ByteBuffer newInternalNioBuffer(int index, int length) {
+        return ByteBuffer.wrap(memory, idx(index), length);
     }
 }
