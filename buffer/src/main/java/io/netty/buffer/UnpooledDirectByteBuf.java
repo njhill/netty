@@ -1,5 +1,5 @@
 /*
- * Copyright 2012 The Netty Project
+ * Copyright 2019 The Netty Project
  *
  * The Netty Project licenses this file to you under the Apache License,
  * version 2.0 (the "License"); you may not use this file except in compliance
@@ -17,23 +17,19 @@ package io.netty.buffer;
 
 import static io.netty.util.internal.ObjectUtil.checkPositiveOrZero;
 
-import io.netty.util.internal.PlatformDependent;
-import io.netty.util.internal.ObjectUtil;
-
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+
+import io.netty.util.internal.ObjectUtil;
+import io.netty.util.internal.PlatformDependent;
 
 /**
  * A NIO {@link ByteBuffer} based buffer. It is recommended to use
  * {@link UnpooledByteBufAllocator#directBuffer(int, int)}, {@link Unpooled#directBuffer(int)} and
  * {@link Unpooled#wrappedBuffer(ByteBuffer)} instead of calling the constructor explicitly.
  */
-public class UnpooledDirectByteBuf extends UnpooledByteBuf {
+public class UnpooledDirectByteBuf extends UnpooledByteBufferBuf {
 
-    ByteBuffer buffer; // accessed by UnpooledUnsafeNoCleanerDirectByteBuf.reallocateDirect()
     private int capacity;
     private boolean doNotFree;
 
@@ -45,6 +41,7 @@ public class UnpooledDirectByteBuf extends UnpooledByteBuf {
      */
     public UnpooledDirectByteBuf(ByteBufAllocator alloc, int initialCapacity, int maxCapacity) {
         super(alloc, maxCapacity);
+
         if (checkPositiveOrZero(initialCapacity, "initialCapacity") > maxCapacity) {
             throw new IllegalArgumentException(String.format(
                     "initialCapacity(%d) > maxCapacity(%d)", initialCapacity, maxCapacity));
@@ -147,140 +144,6 @@ public class UnpooledDirectByteBuf extends UnpooledByteBuf {
     @Override
     public int arrayOffset() {
         throw new UnsupportedOperationException("direct buffer");
-    }
-
-    @Override
-    protected byte _getByte(int index) {
-        return buffer.get(index);
-    }
-
-    @Override
-    protected short _getShort(int index) {
-        return buffer.getShort(index);
-    }
-
-    @Override
-    protected short _getShortLE(int index) {
-        return ByteBufUtil.swapShort(buffer.getShort(index));
-    }
-
-    @Override
-    protected int _getUnsignedMedium(int index) {
-        return (getByte(index) & 0xff)     << 16 |
-               (getByte(index + 1) & 0xff) << 8  |
-               getByte(index + 2) & 0xff;
-    }
-
-    @Override
-    protected int _getUnsignedMediumLE(int index) {
-        return getByte(index) & 0xff             |
-               (getByte(index + 1) & 0xff) << 8  |
-               (getByte(index + 2) & 0xff) << 16;
-    }
-
-    @Override
-    protected int _getInt(int index) {
-        return buffer.getInt(index);
-    }
-
-    @Override
-    protected int _getIntLE(int index) {
-        return ByteBufUtil.swapInt(buffer.getInt(index));
-    }
-
-    @Override
-    protected long _getLong(int index) {
-        return buffer.getLong(index);
-    }
-
-    @Override
-    protected long _getLongLE(int index) {
-        return ByteBufUtil.swapLong(buffer.getLong(index));
-    }
-
-    @Override
-    protected void _setByte(int index, int value) {
-        buffer.put(index, (byte) value);
-    }
-
-    @Override
-    protected void _setShort(int index, int value) {
-        buffer.putShort(index, (short) value);
-    }
-
-    @Override
-    protected void _setShortLE(int index, int value) {
-        buffer.putShort(index, ByteBufUtil.swapShort((short) value));
-    }
-
-    @Override
-    protected void _setMedium(int index, int value) {
-        setByte(index, (byte) (value >>> 16));
-        setByte(index + 1, (byte) (value >>> 8));
-        setByte(index + 2, (byte) value);
-    }
-
-    @Override
-    protected void _setMediumLE(int index, int value) {
-        setByte(index, (byte) value);
-        setByte(index + 1, (byte) (value >>> 8));
-        setByte(index + 2, (byte) (value >>> 16));
-    }
-
-    @Override
-    protected void _setInt(int index, int value) {
-        buffer.putInt(index, value);
-    }
-
-    @Override
-    protected void _setIntLE(int index, int value) {
-        buffer.putInt(index, ByteBufUtil.swapInt(value));
-    }
-
-    @Override
-    protected void _setLong(int index, long value) {
-        buffer.putLong(index, value);
-    }
-
-    @Override
-    protected void _setLongLE(int index, long value) {
-        buffer.putLong(index, ByteBufUtil.swapLong(value));
-    }
-
-    @Override
-    public int setBytes(int index, InputStream in, int length) throws IOException {
-        ensureAccessible();
-        if (buffer.hasArray()) {
-            return in.read(buffer.array(), buffer.arrayOffset() + index, length);
-        } else {
-            byte[] tmp = ByteBufUtil.threadLocalTempArray(length);
-            int readBytes = in.read(tmp, 0, length);
-            if (readBytes <= 0) {
-                return readBytes;
-            }
-            ByteBuffer tmpBuf = internalNioBuffer();
-            tmpBuf.clear().position(index);
-            tmpBuf.put(tmp, 0, readBytes);
-            return readBytes;
-        }
-    }
-
-    @Override
-    public ByteBuf copy(int index, int length) {
-        ensureAccessible();
-        ByteBuffer src;
-        try {
-            src = _internalNioBuffer(index, length, true);
-        } catch (IllegalArgumentException ignored) {
-            throw new IndexOutOfBoundsException("Too many bytes to read - Need " + (index + length));
-        }
-
-        return alloc().directBuffer(length, maxCapacity()).writeBytes(src);
-    }
-
-    @Override
-    ByteBuffer newInternalNioBuffer() {
-        return buffer.duplicate();
     }
 
     @Override
