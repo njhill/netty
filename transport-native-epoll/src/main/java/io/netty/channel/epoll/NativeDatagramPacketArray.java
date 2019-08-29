@@ -19,6 +19,8 @@ import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelOutboundBuffer;
 import io.netty.channel.socket.DatagramPacket;
 import io.netty.channel.unix.IovArray;
+import io.netty.channel.unix.Limits;
+
 import java.net.Inet6Address;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -75,20 +77,19 @@ final class NativeDatagramPacketArray implements ChannelOutboundBuffer.MessagePr
         return true;
     }
 
-    boolean addWritable(ByteBuf content) {
+    boolean addWritable(long address, int len) {
         if (count == packets.length) {
             // We already filled up to UIO_MAX_IOV messages. This is the max allowed per recvmmsg(...) call, we will
             // try again later.
             return false;
         }
-        int len = content.writableBytes();
         if (len == 0) {
             return true;
         }
         NativeDatagramPacket p = packets[count];
 
         int offset = iovArray.count();
-        if (!iovArray.addWritable(content)) {
+        if (offset == Limits.IOV_MAX || !iovArray.add(address, len)) {
             // Not enough space to hold the whole content, we will try again later.
             return false;
         }
