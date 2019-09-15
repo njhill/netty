@@ -15,7 +15,10 @@
  */
 package io.netty.handler.codec.http;
 
+import io.netty.buffer.ByteBufUtil;
+import io.netty.util.CharsetUtil;
 import io.netty.util.internal.ObjectUtil;
+import io.netty.util.internal.StringUtil;
 
 import java.io.UnsupportedEncodingException;
 import java.net.URI;
@@ -55,7 +58,7 @@ public class QueryStringEncoder {
      */
     public QueryStringEncoder(String uri, Charset charset) {
         uriBuilder = new StringBuilder(uri);
-        charsetName = charset.name();
+        charsetName = charset == CharsetUtil.UTF_8 ? null : charset.name();
     }
 
     /**
@@ -69,10 +72,16 @@ public class QueryStringEncoder {
             uriBuilder.append('?');
             hasParams = true;
         }
-        appendComponent(name, charsetName, uriBuilder);
-        if (value != null) {
-            uriBuilder.append('=');
-            appendComponent(value, charsetName, uriBuilder);
+        if (charsetName == null) {
+            appendComponentUtf8(name, uriBuilder);
+            if (value != null) {
+                appendComponentUtf8(value, uriBuilder.append('='));
+            }
+        } else {
+            appendComponent(name, charsetName, uriBuilder);
+            if (value != null) {
+                appendComponent(value, charsetName, uriBuilder.append('='));
+            }
         }
     }
 
@@ -118,5 +127,66 @@ public class QueryStringEncoder {
                 sb.append("%20");
             }
         }
+    }
+
+    private static final byte WRITE_UTF_UNKNOWN = (byte) '?';
+
+    private static void appendEncoded(StringBuilder uriBuilder, int b) {
+        uriBuilder.append('%').append(hexNibble(b >> 4)).append(hexNibble(b));
+    }
+
+    private static char hexNibble(int b) {
+        b &= 0xf;
+        return (char) (b < 10 ? b + 48 : b + 55);
+    }
+
+    /**
+     * @see {@link ByteBufUtil#writeUtf8(io.netty.buffer.ByteBuf, CharSequence, int, int)}
+     */
+    private static void appendComponentUtf8(String seq, StringBuilder sb) {
+        for (int i = 0, l = seq.length(); i < l; i++) {
+            char c = seq.charAt(i);
+            if (c < 0x80) {
+                if ((c >= 'a' && c <= 'z') || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9'
+                        || c == '-' || c == '_' || c == '.' || c == '*') {
+                    sb.append(c);
+                } else {
+                    appendEncoded(sb, c);
+                }
+            } else if (c < 0x800) {
+                appendEncoded(sb, 0xc0 | (c >> 6));
+                appendEncoded(sb, 0x80 | (c & 0x3f));
+            } else if (StringUtil.isSurrogate(c)) {
+                if (!Character.isHighSurrogate(c)) {
+                    appendEncoded(sb, WRITE_UTF_UNKNOWN);
+                    continue;
+                }
+                // Surrogate Pair consumes 2 characters.
+                if (++i == l) {
+                    appendEncoded(sb, WRITE_UTF_UNKNOWN);
+                    break;
+                }
+                // Extra method to allow inlining the rest of writeUtf8 which is the most likely code path.
+                writeUtf8Surrogate(c, seq.charAt(i), sb);
+            } else {
+                appendEncoded(sb, 0xe0 | (c >> 12));
+                appendEncoded(sb, 0x80 | ((c >> 6) & 0x3f));
+                appendEncoded(sb, 0x80 | (c & 0x3f));
+            }
+        }
+    }
+
+    private static void writeUtf8Surrogate(char c, char c2, StringBuilder sb) {
+        if (!Character.isLowSurrogate(c2)) {
+            appendEncoded(sb, WRITE_UTF_UNKNOWN);
+            appendEncoded(sb, Character.isHighSurrogate(c2) ? WRITE_UTF_UNKNOWN : c2);
+            return;
+        }
+        int codePoint = Character.toCodePoint(c, c2);
+        // See http://www.unicode.org/versions/Unicode7.0.0/ch03.pdf#G2630.
+        appendEncoded(sb, 0xf0 | (codePoint >> 18));
+        appendEncoded(sb, 0x80 | ((codePoint >> 12) & 0x3f));
+        appendEncoded(sb, 0x80 | ((codePoint >> 6) & 0x3f));
+        appendEncoded(sb, 0x80 | (codePoint & 0x3f));
     }
 }
