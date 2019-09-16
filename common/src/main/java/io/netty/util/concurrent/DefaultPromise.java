@@ -30,6 +30,9 @@ import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
 import static java.util.Objects.requireNonNull;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 
+import java.util.ArrayDeque;
+import java.util.Deque;
+
 public class DefaultPromise<V> implements Promise<V> {
     private static final InternalLogger logger = InternalLoggerFactory.getInstance(DefaultPromise.class);
     private static final InternalLogger rejectedExecutionLogger =
@@ -454,11 +457,53 @@ public class DefaultPromise<V> implements Promise<V> {
         }
     }
 
-    private void notifyListeners() {
-        safeExecute(executor(), this::notifyListenersNow);
+    static final class NotifyListeners implements Runnable {
+        private final Deque<NotifyListeners> pool;
+        private DefaultPromise<?> promise;
+
+        NotifyListeners(Deque<NotifyListeners> pool, DefaultPromise<?> promise) {
+            this.pool = pool;
+            this.promise = promise;
+        }
+
+        NotifyListeners setPromise(DefaultPromise<?> promise) {
+            this.promise = promise;
+            return this;
+        }
+
+        @Override
+        public void run() {
+            assert promise.executor().inEventLoop();
+            try {
+                promise.notifyListenersNow();
+            } finally {
+                promise = null;
+                pool.offerFirst(this);
+            }
+        }
     }
 
-    private void notifyListenersNow() {
+    private static final FastThreadLocal<Deque<NotifyListeners>> RUNNABLE_POOLS =
+            new FastThreadLocal<Deque<NotifyListeners>>() {
+        @Override
+        protected Deque<NotifyListeners> initialValue() {
+            return new ArrayDeque<NotifyListeners>(8);
+        }
+    };
+
+    private void notifyListeners() {
+        EventExecutor executor = executor();
+        if (!executor.inEventLoop()) {
+            safeExecute(executor, this::notifyListenersNow);
+        } else {
+            Deque<NotifyListeners> pool = RUNNABLE_POOLS.get();
+            NotifyListeners runnable = pool.poll();
+            safeExecute(executor, runnable != null ?
+                    runnable.setPromise(this) : new NotifyListeners(pool, this));
+        }
+    }
+
+    void notifyListenersNow() {
         Object listeners;
         synchronized (this) {
             // Only proceed if there are listeners to notify.
