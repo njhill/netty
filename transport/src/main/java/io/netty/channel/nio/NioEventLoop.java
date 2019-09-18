@@ -771,7 +771,10 @@ public final class NioEventLoop extends SingleThreadEventLoop {
 
     @Override
     protected boolean afterScheduledTaskSubmitted(long deadlineNanos) {
-        return deadlineNanos < nextWakeupTime;
+        if (deadlineNanos < nextWakeupTime) {
+            wakeup(false);
+        }
+        return false;
     }
 
     Selector unwrappedSelector() {

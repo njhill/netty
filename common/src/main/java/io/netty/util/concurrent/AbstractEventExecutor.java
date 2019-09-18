@@ -165,4 +165,21 @@ public abstract class AbstractEventExecutor extends AbstractExecutorService impl
             logger.warn("A task raised an exception. Task: {}", task, t);
         }
     }
+
+    /**
+     * Marker interface for {@link Runnable} to indicate that it should be queued for execution
+     * but does not need to run immediately.
+     */
+    public interface LazyRunnable extends Runnable { }
+
+    /**
+     * Like {@link #execute(Runnable)} but does not guarantee the task will be run until either
+     * a non-lazy task is executed or the executor is shut down.
+     *
+     * This is equivalent to submitting a {@link LazyRunnable} to {@link #execute(Runnable)}
+     * but for an arbitrary {@link Runnable}.
+     */
+    public void lazyExecute(Runnable task) {
+        execute(task);
+    }
 }
