@@ -1216,7 +1216,7 @@ public class DnsNameResolver extends InetNameResolver {
                 // Check if the response was truncated and if we can fallback to TCP to retry.
                 if (res.isTruncated() && socketChannelFactory != null) {
                     // Let's retain as we may need it later on.
-                    res.retain();
+                    msg = null;
 
                     Bootstrap bs = new Bootstrap();
                     bs.option(ChannelOption.SO_REUSEADDR, true)
@@ -1249,10 +1249,6 @@ public class DnsNameResolver extends InetNameResolver {
                                                     qCtx.finish(res);
                                                     return;
                                                 }
-
-                                                // Release the original response as we will use the response that we
-                                                // received via TCP fallback.
-                                                res.release();
 
                                                 tcpCtx.finish(new AddressedEnvelopeAdapter(
                                                         (InetSocketAddress) ctx.channel().remoteAddress(),
@@ -1304,6 +1300,7 @@ public class DnsNameResolver extends InetNameResolver {
                                             // TCP fallback failed, just use the truncated response.
                                             qCtx.finish(res);
                                         }
+                                        res.release();
                                     }
                                 });
                             } else {
@@ -1313,6 +1310,7 @@ public class DnsNameResolver extends InetNameResolver {
 
                                 // TCP fallback failed, just use the truncated response.
                                 qCtx.finish(res);
+                                res.release();
                             }
                         }
                     });
