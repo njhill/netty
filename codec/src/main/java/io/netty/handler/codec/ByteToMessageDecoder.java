@@ -23,6 +23,7 @@ import io.netty.channel.ChannelConfig;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.channel.socket.ChannelInputShutdownEvent;
+import io.netty.util.ByteProcessor;
 import io.netty.util.ReferenceCountUtil;
 import io.netty.util.internal.ObjectUtil;
 import io.netty.util.internal.StringUtil;
@@ -695,6 +696,7 @@ public abstract class ByteToMessageDecoder extends ChannelInboundHandlerAdapter 
                 // reset to default values prior to calling decode
                 minRequired = 1;
                 maxRequired = Integer.MAX_VALUE;
+                byteProcessor = null;
 
                 decodeRemovalReentryProtection(ctx, in, out);
 
@@ -713,6 +715,31 @@ public abstract class ByteToMessageDecoder extends ChannelInboundHandlerAdapter 
                 }
 
                 int remainingAfter = in.readableBytes();
+
+                if (byteProcessor != null) { //TODO split to separate method
+                    //TODO remaining size check etc
+                    lastProcessedByteIndex = in.forEachByte(byteProcessor);
+                    if (lastProcessedByteIndex == -1) {
+                        if (consume) {
+                            in.skipBytes(remainingAfter);
+                            assert minRequired == 1;
+                        } else {
+                            minRequired = remainingAfter + 1;
+                            //TODO update lastProcessedByteIndex here?
+                        }
+                        break;
+                    }
+                    if (consume) {
+                        in.readerIndex(lastProcessedByteIndex);
+                        remainingAfter = in.readableBytes();
+                    } else {
+                        minRequired = lastProcessedByteIndex - in.readerIndex(); //TODO <<< is this necessary here???
+                        //TODO ensure we don't break below in this case .. maybe some of the following logic in an else
+                    }
+                } else {
+                    lastProcessedByteIndex = -1;
+                }
+
                 int outSizeAfter = out.size();
                 boolean somethingWasDecoded = outSizeAfter > outSize;
 
@@ -818,6 +845,29 @@ public abstract class ByteToMessageDecoder extends ChannelInboundHandlerAdapter 
         }
         minRequired = min;
         maxRequired = max;
+    }
+
+    private ByteProcessor byteProcessor;
+    private boolean consume; //TBD
+    private int lastProcessedByteIndex; //TODO
+
+    /**
+     * @param processor
+     * @param consume
+     */
+    //TODO also maxlength arg?
+    protected final void setByteProcessor(ByteProcessor processor, boolean consume) {
+        byteProcessor = processor;
+        this.consume = consume;
+        minRequired = 1;
+        maxRequired = Integer.MAX_VALUE;
+    }
+
+    /**
+     * @return
+     */
+    protected final int getLastProcessedByteIndex() {
+        return lastProcessedByteIndex;
     }
 
     /**
