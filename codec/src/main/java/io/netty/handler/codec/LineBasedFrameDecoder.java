@@ -77,6 +77,7 @@ public class LineBasedFrameDecoder extends ByteToMessageDecoder {
         this.maxLength = maxLength;
         this.failFast = failFast;
         this.stripDelimiter = stripDelimiter;
+        setByteProcessor(ByteProcessor.FIND_LF, false);
     }
 
     @Override
@@ -85,6 +86,7 @@ public class LineBasedFrameDecoder extends ByteToMessageDecoder {
         if (decoded != null) {
             out.add(decoded);
         }
+        setByteProcessor(ByteProcessor.FIND_LF, discarding);
     }
 
     /**
@@ -96,12 +98,17 @@ public class LineBasedFrameDecoder extends ByteToMessageDecoder {
      *                          be created.
      */
     protected Object decode(ChannelHandlerContext ctx, ByteBuf buffer) throws Exception {
-        final int eol = findEndOfLine(buffer);
+        int eol = getLastProcessedByteIndex(); // findEndOfLine(buffer);
+        int delimLength = 1;
+        //TODO optimize
+        if (eol > buffer.readerIndex() && buffer.getByte(eol - 1) == '\r') {
+            eol--;
+            delimLength = 2;
+        }
         if (!discarding) {
             if (eol >= 0) {
                 final ByteBuf frame;
                 final int length = eol - buffer.readerIndex();
-                final int delimLength = buffer.getByte(eol) == '\r'? 2 : 1;
 
                 if (length > maxLength) {
                     buffer.readerIndex(eol + delimLength);
@@ -115,39 +122,38 @@ public class LineBasedFrameDecoder extends ByteToMessageDecoder {
                 } else {
                     frame = buffer.readRetainedSlice(length + delimLength);
                 }
-
                 return frame;
-            } else {
-                final int length = buffer.readableBytes();
-                if (length > maxLength) {
-                    discardedBytes = length;
-                    buffer.readerIndex(buffer.writerIndex());
-                    discarding = true;
-                    offset = 0;
-                    if (failFast) {
-                        fail(ctx, "over " + discardedBytes);
-                    }
-                }
-                return null;
             }
-        } else {
-            if (eol >= 0) {
-                final int length = discardedBytes + eol - buffer.readerIndex();
-                final int delimLength = buffer.getByte(eol) == '\r'? 2 : 1;
-                buffer.readerIndex(eol + delimLength);
-                discardedBytes = 0;
-                discarding = false;
-                if (!failFast) {
-                    fail(ctx, length);
-                }
-            } else {
-                discardedBytes += buffer.readableBytes();
+            assert failFast;
+            
+            //TODO here search in remainder of available buffer and
+            // report/advance accordingly
+            
+            final int length = buffer.readableBytes();
+            if (length > maxLength) {
+                //TODO need change here
+                discardedBytes = length;
                 buffer.readerIndex(buffer.writerIndex());
-                // We skip everything in the buffer, we need to set the offset to 0 again.
+                discarding = true;
                 offset = 0;
+                fail(ctx, "over " + discardedBytes);
             }
             return null;
         }
+        assert eol >= 0;
+        
+        //TODO we don't know discardedBytes here without custom ByteProcessor
+         // which counts (it should exclude `\r` chars from count tho)
+        
+        final int length = discardedBytes + eol - buffer.readerIndex();
+        buffer.readerIndex(eol + delimLength);
+        discardedBytes = 0;
+        discarding = false;
+        if (!failFast) {
+            fail(ctx, length);
+        }
+
+        return null;
     }
 
     private void fail(final ChannelHandlerContext ctx, int length) {

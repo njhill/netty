@@ -194,13 +194,12 @@ public abstract class HttpObjectDecoder extends ByteToMessageDecoder {
                 return;
             }
             currentState = State.READ_INITIAL;
+            setByteProcessor(lineParser.parse(), true);
+            return;
         }
         case READ_INITIAL: try {
-            AppendableCharSequence line = lineParser.parse(buffer);
-            if (line == null) {
-                return;
-            }
-            String[] initialLine = splitInitialLine(line);
+            String[] initialLine = splitInitialLine(lineParser.getResult());
+            buffer.skipBytes(1); // skip LF
             if (initialLine.length < 3) {
                 // Invalid initial line - ignore.
                 currentState = State.SKIP_CONTROL_CHARS;
@@ -209,7 +208,8 @@ public abstract class HttpObjectDecoder extends ByteToMessageDecoder {
 
             message = createMessage(initialLine);
             currentState = State.READ_HEADER;
-            // fall-through
+            setByteProcessor(headerParser.parse(), true);
+            return;
         } catch (Exception e) {
             out.add(invalidMessage(buffer, e));
             return;
@@ -234,6 +234,7 @@ public abstract class HttpObjectDecoder extends ByteToMessageDecoder {
                 }
                 // Chunked encoding - generate HttpMessage first.  HttpChunks will follow.
                 out.add(message);
+                setByteProcessor(lineParser.parse(), true);
                 return;
             default:
                 /**
@@ -310,14 +311,13 @@ public abstract class HttpObjectDecoder extends ByteToMessageDecoder {
          * read chunk, read and ignore the CRLF and repeat until 0
          */
         case READ_CHUNK_SIZE: try {
-            AppendableCharSequence line = lineParser.parse(buffer);
-            if (line == null) {
-                return;
-            }
+            AppendableCharSequence line = lineParser.getResult();
+            buffer.skipBytes(1); // skip LF
             int chunkSize = getChunkSize(line.toString());
             this.chunkSize = chunkSize;
             if (chunkSize == 0) {
                 currentState = State.READ_CHUNK_FOOTER;
+                setByteProcessor(headerParser.parse(), true);
                 return;
             }
             currentState = State.READ_CHUNKED_CONTENT;
@@ -351,10 +351,12 @@ public abstract class HttpObjectDecoder extends ByteToMessageDecoder {
                 byte next = buffer.getByte(rIdx++);
                 if (next == HttpConstants.LF) {
                     currentState = State.READ_CHUNK_SIZE;
+                    setByteProcessor(lineParser.parse(), true);
                     break;
                 }
             }
             buffer.readerIndex(rIdx);
+            setRequiredBytes(1);
             return;
         }
         case READ_CHUNK_FOOTER: try {
@@ -569,31 +571,24 @@ public abstract class HttpObjectDecoder extends ByteToMessageDecoder {
         final HttpMessage message = this.message;
         final HttpHeaders headers = message.headers();
 
-        AppendableCharSequence line = headerParser.parse(buffer);
-        if (line == null) {
-            return null;
-        }
+        AppendableCharSequence line = headerParser.getResult();
+        buffer.skipBytes(1); // skip LF
         if (line.length() > 0) {
-            do {
-                char firstChar = line.charAtUnsafe(0);
-                if (name != null && (firstChar == ' ' || firstChar == '\t')) {
-                    //please do not make one line from below code
-                    //as it breaks +XX:OptimizeStringConcat optimization
-                    String trimmedLine = line.toString().trim();
-                    String valueStr = String.valueOf(value);
-                    value = valueStr + ' ' + trimmedLine;
-                } else {
-                    if (name != null) {
-                        headers.add(name, value);
-                    }
-                    splitHeader(line);
+            char firstChar = line.charAtUnsafe(0);
+            if (name != null && (firstChar == ' ' || firstChar == '\t')) {
+                //please do not make one line from below code
+                //as it breaks +XX:OptimizeStringConcat optimization
+                String trimmedLine = line.toString().trim();
+                String valueStr = String.valueOf(value);
+                value = valueStr + ' ' + trimmedLine;
+            } else {
+                if (name != null) {
+                    headers.add(name, value);
                 }
-
-                line = headerParser.parse(buffer);
-                if (line == null) {
-                    return null;
-                }
-            } while (line.length() > 0);
+                splitHeader(line);
+            }
+            setByteProcessor(headerParser.parse(), true);
+            return null;
         }
 
         // Add the last header.
@@ -665,7 +660,8 @@ public abstract class HttpObjectDecoder extends ByteToMessageDecoder {
     }
 
     private LastHttpContent readTrailingHeaders(ByteBuf buffer) {
-        AppendableCharSequence line = headerParser.parse(buffer);
+        AppendableCharSequence line = headerParser.getResult();
+        buffer.skipBytes(1); // skip LF
         if (line == null) {
             return null;
         }
@@ -705,10 +701,8 @@ public abstract class HttpObjectDecoder extends ByteToMessageDecoder {
                 name = null;
                 value = null;
             }
-            line = headerParser.parse(buffer);
-            if (line == null) {
-                return null;
-            }
+            setByteProcessor(headerParser.parse(), true);
+            return null;
         }
 
         this.trailer = null;
@@ -844,38 +838,34 @@ public abstract class HttpObjectDecoder extends ByteToMessageDecoder {
             this.maxLength = maxLength;
         }
 
-        public AppendableCharSequence parse(ByteBuf buffer) {
-            final int oldSize = size;
-            seq.reset();
-            int i = buffer.forEachByte(this);
-            if (i == -1) {
-                size = oldSize;
-                return null;
-            }
-            buffer.readerIndex(i + 1);
-            return seq;
-        }
-
-        public void reset() {
-            size = 0;
-        }
-
-        @Override
-        public boolean process(byte value) throws Exception {
-            char nextByte = (char) (value & 0xFF);
-            if (nextByte == HttpConstants.CR) {
-                return true;
-            }
-            if (nextByte == HttpConstants.LF) {
-                return false;
-            }
-
-            if (++ size > maxLength) {
+        public final AppendableCharSequence getResult() {
+            if (size > maxLength) {
                 // TODO: Respond with Bad Request and discard the traffic
                 //    or close the connection.
                 //       No need to notify the upstream handlers - just log.
                 //       If decoding a response, just throw an exception.
                 throw newException(maxLength);
+            }
+            return seq;
+        }
+
+        public HeaderParser parse() {
+            seq.reset();
+            return this;
+        }
+
+        public final void reset() {
+            size = 0;
+        }
+
+        @Override
+        public final boolean process(byte value) throws Exception {
+            char nextByte = (char) (value & 0xFF);
+            if (nextByte == HttpConstants.CR) {
+                return true;
+            }
+            if (nextByte == HttpConstants.LF || ++ size > maxLength) {
+                return false;
             }
 
             seq.append(nextByte);
@@ -894,9 +884,9 @@ public abstract class HttpObjectDecoder extends ByteToMessageDecoder {
         }
 
         @Override
-        public AppendableCharSequence parse(ByteBuf buffer) {
+        public HeaderParser parse() {
             reset();
-            return super.parse(buffer);
+            return super.parse();
         }
 
         @Override

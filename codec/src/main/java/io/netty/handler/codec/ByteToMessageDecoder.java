@@ -323,6 +323,27 @@ public abstract class ByteToMessageDecoder extends ChannelInboundHandlerAdapter 
 
     private void mergeDecode(ChannelHandlerContext ctx, final ByteBuf in, CodecOutputList out) {
         try {
+            if (byteProcessor != null) { //TODO consider single-decode permutations too (make sure byteProcessor is set to null in that case)
+                int index = in.forEachByte(byteProcessor);
+                if (consume) {
+                    //TODO maybe these don't hold for singledecode
+                    assert cumulation == null;
+                    assert minRequired == 1;
+                    if (index == -1) {
+                        //TODO what to do with lastProcessedByteIndex here?
+                        in.release();
+                        return;
+                    }
+                    in.readerIndex(index);
+                    lastProcessedByteIndex = index;
+                } else {
+                    assert minRequired == (cumulation == null ? 1 : cumulation.readableBytes() + 1);
+                    int endIdx = index == -1 ? in.writerIndex() : index;
+                    minRequired += (endIdx - in.readerIndex());
+                    //TODO what to do with lastProcessedByteIndex here
+                }
+            }
+
             if (cumulation != null) {
                 input = in;
             } else if (in.isContiguous()) {
@@ -845,6 +866,7 @@ public abstract class ByteToMessageDecoder extends ChannelInboundHandlerAdapter 
         }
         minRequired = min;
         maxRequired = max;
+        byteProcessor = null;
     }
 
     private ByteProcessor byteProcessor;
@@ -860,7 +882,7 @@ public abstract class ByteToMessageDecoder extends ChannelInboundHandlerAdapter 
         byteProcessor = processor;
         this.consume = consume;
         minRequired = 1;
-        maxRequired = Integer.MAX_VALUE;
+        maxRequired = 1; //TODO ensure this gets set to == minRequired after
     }
 
     /**
