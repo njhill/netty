@@ -226,7 +226,6 @@ abstract class AbstractIOUringChannel extends AbstractChannel implements UnixCha
                 ioState &= ~POLL_OUT_SCHEDULED;
             }
             submissionQueue.addPollRemove(socket.intValue(), Native.POLLRDHUP);
-            submissionQueue.submit();
         }
 
         // Even if we allow half closed sockets we should give up on reading. Otherwise we may allow a read attempt on a
@@ -313,7 +312,6 @@ abstract class AbstractIOUringChannel extends AbstractChannel implements UnixCha
 
              if (iovecArray.count() > 0) {
                  submissionQueue().addWritev(socket.intValue(), iovecMemoryAddress, iovecArray.count());
-                 submissionQueue().submit();
                  ioState |= WRITE_SCHEDULED;
              }
          } else {
@@ -324,10 +322,8 @@ abstract class AbstractIOUringChannel extends AbstractChannel implements UnixCha
 
 
     protected final void doWriteSingle(ByteBuf buf) {
-        IOUringSubmissionQueue submissionQueue = submissionQueue();
-        submissionQueue.addWrite(socket.intValue(), buf.memoryAddress(), buf.readerIndex(),
+        submissionQueue().addWrite(socket.intValue(), buf.memoryAddress(), buf.readerIndex(),
                 buf.writerIndex());
-        submissionQueue.submit();
         ioState |= WRITE_SCHEDULED;
     }
 
@@ -335,9 +331,7 @@ abstract class AbstractIOUringChannel extends AbstractChannel implements UnixCha
     private void addPollOut() {
         assert (ioState & POLL_OUT_SCHEDULED) == 0;
         ioState |= POLL_OUT_SCHEDULED;
-        IOUringSubmissionQueue submissionQueue = submissionQueue();
-        submissionQueue.addPollOut(socket.intValue());
-        submissionQueue.submit();
+        submissionQueue().addPollOut(socket.intValue());
     }
 
     abstract class AbstractUringUnsafe extends AbstractUnsafe {
@@ -377,9 +371,7 @@ abstract class AbstractIOUringChannel extends AbstractChannel implements UnixCha
             computeRemote();
 
             // Register POLLRDHUP
-            IOUringSubmissionQueue submissionQueue = submissionQueue();
-            submissionQueue.addPollRdHup(fd().intValue());
-            submissionQueue.submit();
+            submissionQueue().addPollRdHup(fd().intValue());
 
             // Get the state as trySuccess() may trigger an ChannelFutureListener that will close the Channel.
             // We still need to ensure we call fireChannelActive() in this case.
@@ -448,9 +440,7 @@ abstract class AbstractIOUringChannel extends AbstractChannel implements UnixCha
                 return;
             }
             ioState |= POLL_IN_SCHEDULED;
-            IOUringSubmissionQueue submissionQueue = submissionQueue();
-            submissionQueue.addPollIn(socket.intValue());
-            submissionQueue.submit();
+            submissionQueue().addPollIn(socket.intValue());
         }
 
         final void readComplete(int res) {
@@ -600,9 +590,7 @@ abstract class AbstractIOUringChannel extends AbstractChannel implements UnixCha
                 long remoteAddressMemoryAddress = Buffer.memoryAddress(remoteAddressMemory);
 
                 socket.initAddress(address.address(), address.scopeId(), inetSocketAddress.getPort(), remoteAddressMemoryAddress);
-                final IOUringSubmissionQueue ioUringSubmissionQueue = submissionQueue();
-                ioUringSubmissionQueue.addConnect(socket.intValue(), remoteAddressMemoryAddress, SOCK_ADDR_LEN);
-                ioUringSubmissionQueue.submit();
+                submissionQueue().addConnect(socket.intValue(), remoteAddressMemoryAddress, SOCK_ADDR_LEN);
 
             } catch (Throwable t) {
                 closeIfClosed();
