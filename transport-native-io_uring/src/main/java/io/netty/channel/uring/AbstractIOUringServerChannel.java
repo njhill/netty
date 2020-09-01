@@ -55,10 +55,8 @@ abstract class AbstractIOUringServerChannel extends AbstractIOUringChannel imple
             final IOUringRecvByteAllocatorHandle allocHandle = recvBufAllocHandle();
             allocHandle.attemptedBytesRead(1);
 
-            IOUringSubmissionQueue submissionQueue = submissionQueue();
             //Todo get network addresses
-            submissionQueue.addAccept(fd().intValue());
-            submissionQueue.submit();
+            submissionQueue().addAccept(fd().intValue());
         }
 
         protected void readComplete0(int res) {

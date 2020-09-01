@@ -192,9 +192,7 @@ abstract class AbstractIOUringStreamChannel extends AbstractIOUringChannel imple
         super.doRegister();
         if (active) {
             // Register for POLLRDHUP if this channel is already considered active.
-            IOUringSubmissionQueue submissionQueue = submissionQueue();
-            submissionQueue.addPollRdHup(fd().intValue());
-            submissionQueue.submit();
+            submissionQueue().addPollRdHup(fd().intValue());
         }
     }
 
@@ -212,15 +210,13 @@ abstract class AbstractIOUringStreamChannel extends AbstractIOUringChannel imple
         protected void scheduleRead0() {
             final IOUringRecvByteAllocatorHandle allocHandle = recvBufAllocHandle();
             ByteBuf byteBuf = allocHandle.allocate(alloc());
-            IOUringSubmissionQueue submissionQueue = submissionQueue();
             allocHandle.attemptedBytesRead(byteBuf.writableBytes());
 
             assert readBuffer == null;
             readBuffer = byteBuf;
 
-            submissionQueue.addRead(socket.intValue(), byteBuf.memoryAddress(),
+            submissionQueue().addRead(socket.intValue(), byteBuf.memoryAddress(),
                     byteBuf.writerIndex(), byteBuf.capacity());
-            submissionQueue.submit();
         }
 
         @Override
