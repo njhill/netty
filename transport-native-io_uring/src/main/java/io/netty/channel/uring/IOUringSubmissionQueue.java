@@ -98,6 +98,9 @@ final class IOUringSubmissionQueue {
         this.ringMask = PlatformDependent.getInt(kRingMaskAddress);
         this.sqeSlots = PlatformDependent.getInt(kRingEntriesAddress);
 
+        this.ringHead = PlatformDependent.getInt(kHeadAddress);
+        this.ringTail = PlatformDependent.getInt(kTailAddress);
+
         timeoutMemory = Buffer.allocateDirectWithNativeOrder(KERNEL_TIMESPEC_SIZE);
         timeoutMemoryAddress = Buffer.memoryAddress(timeoutMemory);
     }
@@ -131,7 +134,7 @@ final class IOUringSubmissionQueue {
         //user_data should be same as POLL_LINK fd
         if (op == Native.IORING_OP_POLL_REMOVE) {
             PlatformDependent.putInt(sqe + SQE_FD_FIELD, -1);
-            long uData = convertToUserData((byte) Native.IORING_OP_POLL_ADD, fd, pollMask);
+            long uData = convertToUserData(Native.IORING_OP_POLL_ADD, fd, pollMask);
             PlatformDependent.putLong(sqe + SQE_ADDRESS_FIELD, uData);
             PlatformDependent.putLong(sqe + SQE_USER_DATA_FIELD, convertToUserData(op, fd, 0));
             PlatformDependent.putInt(sqe + SQE_RW_FLAGS_FIELD, 0);
@@ -193,16 +196,16 @@ final class IOUringSubmissionQueue {
         }
         int index = sqeIndex++;
         setData(index, op, pollMask, fd, bufferAddress, length, offset);
-        PlatformDependent.putInt(arrayAddress + ((ringTail++) & ringMask) * INT_SIZE, index);
+        PlatformDependent.putInt(arrayAddress + (++ringTail & ringMask) * INT_SIZE, index);
 
         if (sqeIndex >= MAX_SUBMISSION_BATCH_SIZE) {
             ioUringEnter(false); // max submission threshold
         }
     }
 
-    public void addReservedSqe(int index) {
+    public void enqueueReservedSqe(int index) {
         assert index >= sqeSlots; // && < entries
-        PlatformDependent.putInt(arrayAddress + ((ringTail++) & ringMask) * INT_SIZE, index);
+        PlatformDependent.putInt(arrayAddress + (++ringTail & ringMask) * INT_SIZE, index);
     }
 
     //return true -> submit() was called
@@ -238,7 +241,7 @@ final class IOUringSubmissionQueue {
     }
 
     public void ioUringEnter(boolean getEvents) {
-        int submit = ringHead - ringTail;
+        int submit = count();
         if (submit != 0) {
             PlatformDependent.putIntOrdered(kTailAddress, ringTail);
         }
@@ -272,12 +275,12 @@ final class IOUringSubmissionQueue {
         PlatformDependent.putLong(timeoutMemoryAddress + KERNEL_TIMESPEC_TV_NSEC_FIELD, nanoSeconds);
     }
 
-    private long convertToUserData(int op, int fd, int pollMask) {
-        int opMask = (op << 16) | ((short) pollMask & 0xFFFF);
+    private static long convertToUserData(int op, int fd, int pollMask) {
+        int opMask = (op << 16) | (pollMask & 0xFFFF);
         return (long) fd << 32 | opMask & 0xFFFFFFFFL;
     }
 
-    public long count() {
+    public int count() {
         return (ringTail - ringHead) & ringMask;
     }
 
