@@ -119,7 +119,7 @@ final class IOUringEventLoop extends SingleThreadEventLoop implements
 
         // Lets add the eventfd related events before starting to do any real work.
         eventfdSqe = submissionQueue.reserveSqe(Native.IORING_OP_READ, 0, eventfd.intValue(), efdReadBuf, 8, 0);
-        submissionQueue.addReservedSqe(eventfdSqe);
+        submissionQueue.enqueueReservedSqe(eventfdSqe);
 
         for (;;) {
             for (;;) {
@@ -181,7 +181,7 @@ final class IOUringEventLoop extends SingleThreadEventLoop implements
         if (op == Native.IORING_OP_READ || op == Native.IORING_OP_ACCEPT) {
             if (eventfd.intValue() == fd) {
                 pendingWakeup = false;
-                submissionQueue.addReservedSqe(eventfdSqe);
+                submissionQueue.enqueueReservedSqe(eventfdSqe);
             } else {
                 handleRead(fd, res);
             }
