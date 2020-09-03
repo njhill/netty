@@ -67,6 +67,8 @@ final class IOUringCompletionQueue {
       if (head == tail) {
           return 0;
       }
+      System.out.println(Thread.currentThread().getName()
+              + " PROCESS COMPLETIONS " + (tail-head) + " entries");
       int i = 0;
       for (;;) {
           long index = head & ringMask;

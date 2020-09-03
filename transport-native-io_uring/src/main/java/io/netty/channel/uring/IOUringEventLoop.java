@@ -178,6 +178,9 @@ final class IOUringEventLoop extends SingleThreadEventLoop implements
     @Override
     public boolean handle(int fd, int res, int flags, int op, int pollMask) {
         IOUringSubmissionQueue submissionQueue = ringBuffer.getIoUringSubmissionQueue();
+        System.out.println(Thread.currentThread().getName()
+                + "   HANDLE COMPLETION "+IOUringSubmissionQueue.OP[op]
+                        +" fd="+fd+" res="+res+" flags="+flags+" pollmask="+pollMask);
         if (op == Native.IORING_OP_READ || op == Native.IORING_OP_ACCEPT) {
             if (eventfd.intValue() == fd) {
                 pendingWakeup = false;

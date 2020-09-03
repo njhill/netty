@@ -112,6 +112,8 @@ final class IOUringSubmissionQueue {
         }
         int index = --sqeSlots;
         setData(index, op, pollMask, fd, bufferAddress, length, offset);
+        System.out.println(Thread.currentThread().getName()
+                + " RESERVE SQE INDEX "+index+" for op "+OP[op]+" fd="+fd);
         return index;
     }
 
@@ -195,19 +197,27 @@ final class IOUringSubmissionQueue {
             ioUringEnter(false); // no slots left
         }
         int index = sqeIndex++;
+        System.out.println(Thread.currentThread().getName()
+                + " ENQUEUE SQE "+OP[op]+" fd="+fd+" addr="+bufferAddress+" l="+length+" off="+offset
+                + " to idx " + index + ", pos "+(ringTail+1));
         setData(index, op, pollMask, fd, bufferAddress, length, offset);
-        PlatformDependent.putInt(arrayAddress + (++ringTail & ringMask) * INT_SIZE, index);
-
-        if (sqeIndex >= MAX_SUBMISSION_BATCH_SIZE) {
-            ioUringEnter(false); // max submission threshold
-        }
+        enqueueSqe(index);
     }
 
     public void enqueueReservedSqe(int index) {
         assert index >= sqeSlots; // && < entries
-        PlatformDependent.putInt(arrayAddress + (++ringTail & ringMask) * INT_SIZE, index);
+        System.out.println(Thread.currentThread().getName()
+                + " ENQUEUE RESERVED SQE INDEX "+index+" to pos "+(ringTail+1));
+        enqueueSqe(index);
     }
 
+    private void enqueueSqe(int index) {
+        PlatformDependent.putInt(arrayAddress + (++ringTail & ringMask) * INT_SIZE, index);
+        if (count() >= MAX_SUBMISSION_BATCH_SIZE) {
+            ioUringEnter(false); // max submission threshold
+        }
+    }
+    
     //return true -> submit() was called
     public boolean addRead(int fd, long bufferAddress, int pos, int limit) {
         enqueueSqe(Native.IORING_OP_READ, 0, fd, bufferAddress + pos, limit - pos, 0);
@@ -248,8 +258,14 @@ final class IOUringSubmissionQueue {
         int ret = getEvents
                 ? Native.ioUringEnter(ringFd, submit, 1, IORING_ENTER_GETEVENTS)
                 : Native.ioUringEnter(ringFd, submit, 0, 0);
+        System.out.println(Thread.currentThread().getName()
+                + " URING-ENTER submitting " + submit + " getevents=" + getEvents);
         if (ret < 0) {
             throw new RuntimeException("ioUringEnter syscall");
+        }
+        if (getEvents) {
+            System.out.println(Thread.currentThread().getName()
+                    + " URING-ENTER WAKEUP " + submit + " getevents=" + getEvents);
         }
         ringHead += ret;
         sqeIndex = 0;
@@ -340,4 +356,41 @@ final class IOUringSubmissionQueue {
     public static long getUIntVolatile(long address) {
         return PlatformDependent.getIntVolatile(address) & 0xffffffffL;
     }
+
+    static final String[] OP = {
+            "IORING_OP_NOP",
+            "IORING_OP_READV",
+            "IORING_OP_WRITEV",
+            "IORING_OP_FSYNC",
+            "IORING_OP_READ_FIXED",
+            "IORING_OP_WRITE_FIXED",
+            "IORING_OP_POLL_ADD",
+            "IORING_OP_POLL_REMOVE",
+            "IORING_OP_SYNC_FILE_RANGE",
+            "IORING_OP_SENDMSG",
+            "IORING_OP_RECVMSG",
+            "IORING_OP_TIMEOUT",
+            "IORING_OP_TIMEOUT_REMOVE",
+            "IORING_OP_ACCEPT",
+            "IORING_OP_ASYNC_CANCEL",
+            "IORING_OP_LINK_TIMEOUT",
+            "IORING_OP_CONNECT",
+            "IORING_OP_FALLOCATE",
+            "IORING_OP_OPENAT",
+            "IORING_OP_CLOSE",
+            "IORING_OP_FILES_UPDATE",
+            "IORING_OP_STATX",
+            "IORING_OP_READ",
+            "IORING_OP_WRITE",
+            "IORING_OP_FADVISE",
+            "IORING_OP_MADVISE",
+            "IORING_OP_SEND",
+            "IORING_OP_RECV",
+            "IORING_OP_OPENAT2",
+            "IORING_OP_EPOLL_CTL",
+            "IORING_OP_SPLICE",
+            "IORING_OP_PROVIDE_BUFFERS",
+            "IORING_OP_REMOVE_BUFFERS",
+            "IORING_OP_TEE"
+    };
 }
