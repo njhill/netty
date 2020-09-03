@@ -69,7 +69,7 @@ final class IOUringCompletionQueue {
       }
       int i = 0;
       for (;;) {
-          long index = ++head & ringMask;
+          long index = head & ringMask;
           long cqe = index * CQE_SIZE + completionQueueArrayAddress;
 
           long udata = PlatformDependent.getLong(cqe + CQE_USER_DATA_FIELD);
@@ -77,11 +77,11 @@ final class IOUringCompletionQueue {
           int flags = PlatformDependent.getInt(cqe + CQE_FLAGS_FIELD);
 
           //Ensure that the kernel only sees the new value of the head index after the CQEs have been read.
-          PlatformDependent.putIntOrdered(kHeadAddress, head);
+          PlatformDependent.putIntOrdered(kHeadAddress, ++head);
 
-          int fd = (int) (udata >> 32);
-          int opMask = (int) udata;
-          int op = (opMask >> 16) & 0xffff;
+          int fd = (int) (udata >>> 32);
+          int opMask = (int) (udata & 0xFFFFFFFFL);
+          int op = opMask >>> 16;
           int mask = opMask & 0xffff;
 
           i++;
