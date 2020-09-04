@@ -19,6 +19,7 @@ import io.netty.channel.EventLoopGroup;
 import io.netty.channel.SingleThreadEventLoop;
 import io.netty.channel.unix.Errors;
 import io.netty.channel.unix.FileDescriptor;
+import io.netty.channel.uring.IOUringCompletionQueue.IOUringCompletionQueueCallback;
 import io.netty.util.collection.IntObjectHashMap;
 import io.netty.util.collection.IntObjectMap;
 import io.netty.util.internal.PlatformDependent;
@@ -28,6 +29,7 @@ import io.netty.util.internal.logging.InternalLoggerFactory;
 import java.io.IOException;
 import java.util.Queue;
 import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 final class IOUringEventLoop extends SingleThreadEventLoop implements
@@ -121,9 +123,10 @@ final class IOUringEventLoop extends SingleThreadEventLoop implements
         eventfdSqe = submissionQueue.reserveSqe(Native.IORING_OP_READ, 0, eventfd.intValue(), efdReadBuf, 8, 0);
         submissionQueue.enqueueReservedSqe(eventfdSqe);
 
+        logger.trace("Run IOUringEventLoop {}", this);
         for (;;) {
             for (;;) {
-                // userspace loop
+                // avoid blocking for as long as possible
                 completionQueue.process(this);
                 boolean ranTasks = runAllTasks();
                 if (!ranTasks) {
@@ -142,7 +145,20 @@ final class IOUringEventLoop extends SingleThreadEventLoop implements
                 logger.info("Exception error: {}", t);
             }
 
-            logger.trace("Run IOUringEventLoop {}", this.toString());
+            if (pendingWakeup) {
+                // We are going to be immediately woken so no need to reset nextWakeupNanos
+                submissionQueue.addTimeout(TimeUnit.SECONDS.toNanos(1L));
+                submissionQueue.ioUringEnter(true);
+                if (completionQueue.completionCount() <= 1) {
+                    // A count of 1 here will always be the timeout completion since it
+                    // completes when any other events complete.
+                    // So assume that we missed the write event due to some syscall abnormality.
+                    logger.warn("Missed eventfd write (not seen after > 1 second)");
+                    pendingWakeup = false;
+                    continue;
+                }
+            }
+
             long curDeadlineNanos = nextScheduledTaskDeadlineNanos();
             if (curDeadlineNanos == -1L) {
                 curDeadlineNanos = NONE; // nothing on the calendar
@@ -157,7 +173,6 @@ final class IOUringEventLoop extends SingleThreadEventLoop implements
                         prevDeadlineNanos = curDeadlineNanos;
                         submissionQueue.addTimeout(deadlineToDelayNanos(curDeadlineNanos));
                     }
-
                     // Check there were any completion events to process
                     if (!completionQueue.hasCompletions()) {
                         // Block if there is nothing to process after this try again to call process(....)
@@ -166,6 +181,7 @@ final class IOUringEventLoop extends SingleThreadEventLoop implements
                     }
                 } catch (Throwable t) {
                     //Todo handle exception
+                    t.printStackTrace();
                 } finally {
                     if (nextWakeupNanos.get() == AWAKE || nextWakeupNanos.getAndSet(AWAKE) == AWAKE) {
                         pendingWakeup = true;
@@ -177,11 +193,10 @@ final class IOUringEventLoop extends SingleThreadEventLoop implements
 
     @Override
     public boolean handle(int fd, int res, int flags, int op, int pollMask) {
-        IOUringSubmissionQueue submissionQueue = ringBuffer.getIoUringSubmissionQueue();
         if (op == Native.IORING_OP_READ || op == Native.IORING_OP_ACCEPT) {
             if (eventfd.intValue() == fd) {
                 pendingWakeup = false;
-                submissionQueue.enqueueReservedSqe(eventfdSqe);
+                ringBuffer.getIoUringSubmissionQueue().enqueueReservedSqe(eventfdSqe);
             } else {
                 handleRead(fd, res);
             }
@@ -190,9 +205,9 @@ final class IOUringEventLoop extends SingleThreadEventLoop implements
         } else if (op == Native.IORING_OP_POLL_ADD) {
             if (res == ECANCELED) {
                 logger.trace("IORING_POLL_ADD cancelled");
-                return true;
+            } else {
+                handlePollAdd(fd, res, pollMask);
             }
-            handlePollAdd(fd, res, pollMask);
         } else if (op == Native.IORING_OP_POLL_REMOVE) {
             if (res == Errors.ERRNO_ENOENT_NEGATIVE) {
                 logger.trace("IORING_POLL_REMOVE not successful");
@@ -248,6 +263,26 @@ final class IOUringEventLoop extends SingleThreadEventLoop implements
 
     @Override
     protected void cleanup() {
+        final IOUringCompletionQueue completionQueue = ringBuffer.getIoUringCompletionQueue();
+        final IOUringSubmissionQueue submissionQueue = ringBuffer.getIoUringSubmissionQueue();
+        while (pendingWakeup) {
+            submissionQueue.addTimeout(TimeUnit.SECONDS.toNanos(1L));
+            submissionQueue.ioUringEnter(true);
+            if (completionQueue.completionCount() <= 1) {
+                // We timed-out so assume that the write we're expecting isn't coming
+                break;
+            }
+            // We only care about the eventfd read completion at this point
+            completionQueue.process(new IOUringCompletionQueueCallback() {
+                @Override
+                public boolean handle(int fd, int res, int flags, int op, int mask) {
+                    if (op == Native.IORING_OP_READ && fd == eventfd.intValue()) {
+                        pendingWakeup = false;
+                    }
+                    return pendingWakeup;
+                }
+            });
+        }
         try {
             eventfd.close();
         } catch (IOException e) {

@@ -25,9 +25,10 @@ public class IOUringSubmissionQueueTest {
         assertNotNull(completionQueue);
 
         int counter = 0;
-        while(!submissionQueue.addAccept(-1)) {
+        do {
+            submissionQueue.addAccept(-1);
             counter++;
-        }
+        } while (submissionQueue.count() != 0);
         assertEquals(8, counter);
     }
 }

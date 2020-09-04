@@ -22,18 +22,17 @@ import io.netty.util.internal.logging.InternalLoggerFactory;
 
 import java.nio.ByteBuffer;
 
-import static java.lang.Math.max;
-import static java.lang.Math.min;
-
 final class IOUringSubmissionQueue {
     private static final InternalLogger logger = InternalLoggerFactory.getInstance(IOUringSubmissionQueue.class);
 
-    // this can be set smaller than the ring size to flush submissions more frequently
+    // This can be set smaller than the ring size to flush submissions more frequently.
+    // It may make sense to use a different metric such as event loop iterations or
+    // time elapsed.
     private static final int MAX_SUBMISSION_BATCH_SIZE = Integer.MAX_VALUE;
 
     private static final int IORING_ENTER_GETEVENTS = 1;
 
-    private static final int SQE_SIZE = 64;
+    private static final long SQE_SIZE = 64; //TODO sizeof
     private static final int INT_SIZE = Integer.BYTES; //no 32 Bit support?
     private static final int KERNEL_TIMESPEC_SIZE = 16; //__kernel_timespec
 
@@ -103,6 +102,8 @@ final class IOUringSubmissionQueue {
 
         timeoutMemory = Buffer.allocateDirectWithNativeOrder(KERNEL_TIMESPEC_SIZE);
         timeoutMemoryAddress = Buffer.memoryAddress(timeoutMemory);
+        // Zero the whole array first
+        PlatformDependent.setMemory(submissionQueueArrayAddress, sqeSlots * SQE_SIZE, (byte) 0);
     }
 
     // Reserve an entry at the end of the the sqe array. Other entries are filled from the start
@@ -121,73 +122,52 @@ final class IOUringSubmissionQueue {
                 bufferAddress, length, offset);
     }
 
-    private void setData(long sqe, int op, int pollMask, int fd, long bufferAddress, int length, long offset) {
-        //Todo cleaner
+    private void setData(long sqe, int op, int rwFlags, int fd, long bufferAddress, int length, long offset) {
         //set sqe(submission queue) properties
+        // never-used fields are omitted since we zero the entire array up-front
+        
         PlatformDependent.putByte(sqe + SQE_OP_CODE_FIELD, (byte) op);
-        PlatformDependent.putShort(sqe + SQE_IOPRIO_FIELD, (short) 0);
+        //PlatformDependent.putByte(sqe + SQE_FLAGS_FIELD, (byte) 0);
+        //PlatformDependent.putShort(sqe + SQE_IOPRIO_FIELD, (short) 0);
         PlatformDependent.putInt(sqe + SQE_FD_FIELD, fd);
         PlatformDependent.putLong(sqe + SQE_OFFSET_FIELD, offset);
         PlatformDependent.putLong(sqe + SQE_ADDRESS_FIELD, bufferAddress);
         PlatformDependent.putInt(sqe + SQE_LEN_FIELD, length);
-
-        //user_data should be same as POLL_LINK fd
-        if (op == Native.IORING_OP_POLL_REMOVE) {
-            PlatformDependent.putInt(sqe + SQE_FD_FIELD, -1);
-            long uData = convertToUserData(Native.IORING_OP_POLL_ADD, fd, pollMask);
-            PlatformDependent.putLong(sqe + SQE_ADDRESS_FIELD, uData);
-            PlatformDependent.putLong(sqe + SQE_USER_DATA_FIELD, convertToUserData(op, fd, 0));
-            PlatformDependent.putInt(sqe + SQE_RW_FLAGS_FIELD, 0);
-        } else {
-            long uData = convertToUserData(op, fd, pollMask);
-            PlatformDependent.putLong(sqe + SQE_USER_DATA_FIELD, uData);
-            //c union set Rw-Flags or accept_flags
-            if (op != Native.IORING_OP_ACCEPT) {
-                PlatformDependent.putInt(sqe + SQE_RW_FLAGS_FIELD, pollMask);
-            } else {
-                //accept_flags set NON_BLOCKING
-                PlatformDependent.putInt(sqe + SQE_RW_FLAGS_FIELD, Native.SOCK_NONBLOCK | Native.SOCK_CLOEXEC);
-            }
-        }
-
-        PlatformDependent.putByte(sqe + SQE_FLAGS_FIELD, (byte) 0);
-
-
-
+        PlatformDependent.putInt(sqe + SQE_RW_FLAGS_FIELD, rwFlags);
+        long userData = convertToUserData(op, fd, rwFlags);
+        PlatformDependent.putLong(sqe + SQE_USER_DATA_FIELD, userData);
         // pad field array -> all fields should be zero
-        long offsetIndex = 0;
-        for (int i = 0; i < 3; i++) {
-            PlatformDependent.putLong(sqe + SQE_PAD_FIELD + offsetIndex, 0);
-            offsetIndex += 8;
-        }
+//        long offsetIndex = 0;
+//        for (int i = 0; i < 3; i++) {
+//            PlatformDependent.putLong(sqe + SQE_PAD_FIELD + offsetIndex, 0);
+//            offsetIndex += 8;
+//        }
 
-        logger.trace("UserDataField: {}", PlatformDependent.getLong(sqe + SQE_USER_DATA_FIELD));
-        logger.trace("BufferAddress: {}", PlatformDependent.getLong(sqe + SQE_ADDRESS_FIELD));
-        logger.trace("Length: {}", PlatformDependent.getInt(sqe + SQE_LEN_FIELD));
-        logger.trace("Offset: {}", PlatformDependent.getLong(sqe + SQE_OFFSET_FIELD));
+        logger.trace("UserDataField: {}", userData);
+        logger.trace("BufferAddress: {}", bufferAddress);
+        logger.trace("Length: {}", length);
+        logger.trace("Offset: {}", offset);
     }
 
-    public boolean addTimeout(long nanoSeconds) {
+    public void addTimeout(long nanoSeconds) {
         setTimeout(nanoSeconds);
         enqueueSqe(Native.IORING_OP_TIMEOUT, 0, -1, timeoutMemoryAddress, 1, 0);
-        return true;
     }
 
-    public boolean addPollIn(int fd) {
-        return addPoll(fd, Native.POLLIN);
+    public void addPollIn(int fd) {
+        addPoll(fd, Native.POLLIN);
     }
 
-    public boolean addPollRdHup(int fd) {
-        return addPoll(fd, Native.POLLRDHUP);
+    public void addPollRdHup(int fd) {
+        addPoll(fd, Native.POLLRDHUP);
     }
 
-    public boolean addPollOut(int fd) {
-        return addPoll(fd, Native.POLLOUT);
+    public void addPollOut(int fd) {
+        addPoll(fd, Native.POLLOUT);
     }
 
-    private boolean addPoll(int fd, int pollMask) {
+    private void addPoll(int fd, int pollMask) {
         enqueueSqe(Native.IORING_OP_POLL_ADD, pollMask, fd, 0, 0, 0);
-        return true;
     }
 
     void enqueueSqe(int op, int pollMask, int fd, long bufferAddress, int length, long offset) {
@@ -196,48 +176,45 @@ final class IOUringSubmissionQueue {
         }
         int index = sqeIndex++;
         setData(index, op, pollMask, fd, bufferAddress, length, offset);
-        PlatformDependent.putInt(arrayAddress + (++ringTail & ringMask) * INT_SIZE, index);
-
-        if (sqeIndex >= MAX_SUBMISSION_BATCH_SIZE) {
-            ioUringEnter(false); // max submission threshold
-        }
+        enqueueSqe(index, op == Native.IORING_OP_TIMEOUT);
     }
 
     public void enqueueReservedSqe(int index) {
         assert index >= sqeSlots; // && < entries
-        PlatformDependent.putInt(arrayAddress + (++ringTail & ringMask) * INT_SIZE, index);
+        enqueueSqe(index, false);
     }
 
-    //return true -> submit() was called
-    public boolean addRead(int fd, long bufferAddress, int pos, int limit) {
+    private void enqueueSqe(int index, boolean noflush) {
+        PlatformDependent.putInt(arrayAddress + (ringTail++ & ringMask) * INT_SIZE, index);
+        if (!noflush && count() >= MAX_SUBMISSION_BATCH_SIZE) {
+            ioUringEnter(false); // max submission threshold
+        }
+    }
+
+    public void addRead(int fd, long bufferAddress, int pos, int limit) {
         enqueueSqe(Native.IORING_OP_READ, 0, fd, bufferAddress + pos, limit - pos, 0);
-        return true;
     }
 
-    public boolean addWrite(int fd, long bufferAddress, int pos, int limit) {
+    public void addWrite(int fd, long bufferAddress, int pos, int limit) {
         enqueueSqe(Native.IORING_OP_WRITE, 0, fd, bufferAddress + pos, limit - pos, 0);
-        return true;
     }
 
-    public boolean addAccept(int fd) {
-        enqueueSqe(Native.IORING_OP_ACCEPT, 0, fd, 0, 0, 0);
-        return true;
+    public void addAccept(int fd) {
+        enqueueSqe(Native.IORING_OP_ACCEPT, Native.SOCK_NONBLOCK | Native.SOCK_CLOEXEC, fd, 0, 0, 0);
     }
 
-    //fill the address which is associated with server poll link user_data
-    public boolean addPollRemove(int fd, int pollMask) {
-        enqueueSqe(Native.IORING_OP_POLL_REMOVE, pollMask, fd, 0, 0, 0);
-        return true;
+    //fill the address which is associated with the poll add user_data
+    public void addPollRemove(int fd, int pollMask) {
+        enqueueSqe(Native.IORING_OP_POLL_REMOVE, 0, fd,
+                convertToUserData(Native.IORING_OP_POLL_ADD, fd, pollMask), 0, 0);
     }
 
-    public boolean addConnect(int fd, long socketAddress, long socketAddressLength) {
+    public void addConnect(int fd, long socketAddress, long socketAddressLength) {
         enqueueSqe(Native.IORING_OP_CONNECT, 0, fd, socketAddress, 0, socketAddressLength);
-        return true;
     }
 
-    public boolean addWritev(int fd, long iovecArrayAddress, int length) {
+    public void addWritev(int fd, long iovecArrayAddress, int length) {
         enqueueSqe(Native.IORING_OP_WRITEV, 0, fd, iovecArrayAddress, length, 0);
-        return true;
     }
 
     public void ioUringEnter(boolean getEvents) {
@@ -249,13 +226,13 @@ final class IOUringSubmissionQueue {
                 ? Native.ioUringEnter(ringFd, submit, 1, IORING_ENTER_GETEVENTS)
                 : Native.ioUringEnter(ringFd, submit, 0, 0);
         if (ret < 0) {
-            throw new RuntimeException("ioUringEnter syscall");
+            throw new RuntimeException("ioUringEnter syscall ret=" + ret);
         }
         ringHead += ret;
         sqeIndex = 0;
         if (ret != submit) {
-            //TODO handle this
-            throw new RuntimeException("Unexpected - not all submissions consumed");
+            //TODO need to fix this, probably best to stick with wrapping
+            logger.warn("Unexpected - submitted " + submit + ", conusmed " + ret);
         }
     }
 
@@ -281,7 +258,7 @@ final class IOUringSubmissionQueue {
     }
 
     public int count() {
-        return (ringTail - ringHead) & ringMask;
+        return ringTail - ringHead;
     }
 
     //delete memory
