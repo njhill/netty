@@ -192,7 +192,7 @@ abstract class AbstractIOUringStreamChannel extends AbstractIOUringChannel imple
     }
 
     @Override
-    protected void doRegister() throws Exception {
+    protected void doRegister() {
         super.doRegister();
         if (active) {
             // Register for POLLRDHUP if this channel is already considered active.
@@ -221,7 +221,8 @@ abstract class AbstractIOUringStreamChannel extends AbstractIOUringChannel imple
             readBuffer = byteBuf;
 
             submissionQueue.addRead(socket.intValue(), byteBuf.memoryAddress(),
-                    byteBuf.writerIndex(), byteBuf.capacity());
+                    byteBuf.writerIndex(), byteBuf.capacity(),
+                    ((IOUringEventLoop) eventLoop()).getFixedBufferIndex(byteBuf), false);
         }
 
         @Override
